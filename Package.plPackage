@@ -1,0 +1,45 @@
+// plasma.jolt — Jolt physics.
+//
+// The AUTHORED manifest, kept in source next to the plugin. Component hashes and sizes are NOT
+// here: the packaging step computes those and emits them into the published manifest.
+//
+// Field reference and validation rules: Docs/PluginPackageManagerPlan.html §05.
+
+PackageInfo
+{
+	string %Id{"plasma.jolt"}
+	string %Version{"1.0.0"}
+	string %Publisher{"PlasmaTechnology"}
+	string %License{"MIT"}
+	string %Homepage{"https://plasmagameengine.com"}
+
+	string %MinEngineVersion{"0.7.0"}
+	string %MaxEngineVersion{"0.7.0"}
+	string %AbiTag{"win64-msvc19-0.7.0-dev"}
+
+	string %DisplayName{"Jolt Physics"}
+	string %Category{"Physics"}
+	string %Description{"Rigid body physics, character controllers, ragdolls, cloth and collision cooking, powered by Jolt Physics.
+
+Jolt is compiled into the plugin, so there is nothing else to install."}
+	string %Icon{"Branding/JoltIcon.png"}
+	string %Banner{"Branding/JoltBanner.png"}
+
+	// Three plugins: the runtime, the editor-engine-process side, and the editor.
+	// Jolt itself is statically folded in, so there is no redistributable.
+	string %EditorPlugins{"plEditorPluginJolt"}
+	string %EditorEnginePlugins{"plEnginePluginJolt"}
+	string %RuntimePlugins{"plJoltPlugin"}
+	string %PackageDependencies{}
+
+	// ---- dependencies ---------------------------------------------------------
+	// plEditorPluginJolt defines asset document types (collision meshes, ragdolls),
+	// so it builds on EditorPluginAssets and must load after it.
+	Requires { string %Id{"plasma.assets"} string %Range{"^1.0"} }
+
+	Component { string %Name{"manifest"} string %Platform{"any"} }
+	Component { string %Name{"runtime-win64"} string %Platform{"win64"} }
+	Component { string %Name{"editor-win64"} string %Platform{"win64"} }
+	Component { string %Name{"icon"} string %Platform{"any"} }
+	Component { string %Name{"banner"} string %Platform{"any"} }
+}
