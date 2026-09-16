@@ -5,6 +5,7 @@
 #include <Foundation/Configuration/Startup.h>
 #include <Foundation/IO/ChunkStream.h>
 #include <Foundation/Math/BoundingBoxSphere.h>
+#include <Foundation/Strings/StringBuilder.h>
 #include <Foundation/Time/Stopwatch.h>
 #include <Foundation/Utilities/Progress.h>
 #include <JoltCooking/JoltCooking.h>
@@ -16,6 +17,7 @@
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <JoltPlugin/Utilities/JoltConversionUtils.h>
 #include <Physics/Collision/Shape/ConvexHullShape.h>
+#include <stdarg.h>
 
 #define ENABLE_VHACD_IMPLEMENTATION 1
 #include <VHACD/VHACD.h>
@@ -46,13 +48,47 @@ private:
   bool m_bFailed = false;
 };
 
-plResult plJoltCooking::CookTriangleMesh(const plJoltCookingMesh& mesh, plStreamWriter& ref_outputStream)
+static void JoltCookingTraceFunc(const char* szText, ...)
+{
+  plStringBuilder tmp;
+
+  va_list args;
+  va_start(args, szText);
+  tmp.SetPrintfArgs(szText, args);
+  va_end(args);
+
+  plLog::Dev("Jolt: {}", tmp);
+}
+
+#ifdef JPH_ENABLE_ASSERTS
+
+static bool JoltCookingAssertFailed(const char* szInExpression, const char* szInMessage, const char* szInFile, uint32_t inLine)
+{
+  return plFailedCheck(szInFile, inLine, "Jolt", szInExpression, szInMessage);
+}
+
+#endif // JPH_ENABLE_ASSERTS
+
+/// \brief Installs this DLL's copy of the JPH global hooks.
+///
+/// Jolt is compiled into every consumer rather than shared (jolt.module.cs sets ExportsSymbols = false),
+/// so each DLL has its own JPH::Allocate / JPH::Trace / JPH::AssertFailed. plJoltCore::Startup() only ever
+/// sets the copy inside plJoltPlugin.dll, which leaves the cooking code's Trace pointing at Jolt's stub
+/// and its diagnostics discarded. Cooking runs without a physics system, so it initialises them itself.
+static void EnsureJoltHooksInstalled()
 {
   if (JPH::Allocate == nullptr)
   {
-    // make sure an allocator exists
     JPH::RegisterDefaultAllocator();
   }
+
+  JPH::Trace = JoltCookingTraceFunc;
+  JPH_IF_ENABLE_ASSERTS(JPH::AssertFailed = JoltCookingAssertFailed);
+}
+
+plResult plJoltCooking::CookTriangleMesh(const plJoltCookingMesh& mesh, plStreamWriter& ref_outputStream)
+{
+  EnsureJoltHooksInstalled();
 
   JPH::VertexList vertexList;
   JPH::IndexedTriangleList triangleList;
@@ -193,11 +229,7 @@ PL_DEFINE_AS_POD_TYPE(JPH::Vec3);
 
 plResult plJoltCooking::CookSingleConvexJoltMesh(const plJoltCookingMesh& mesh, plStreamWriter& OutputStream)
 {
-  if (JPH::Allocate == nullptr)
-  {
-    // make sure an allocator exists
-    JPH::RegisterDefaultAllocator();
-  }
+  EnsureJoltHooksInstalled();
 
   plHybridArray<JPH::Vec3, 256> verts;
   verts.SetCountUninitialized(mesh.m_Vertices.GetCount());

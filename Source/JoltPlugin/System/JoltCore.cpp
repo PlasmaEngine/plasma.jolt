@@ -59,6 +59,12 @@ static void JoltTraceFunc(const char* szText, ...)
   plLog::Dev("Jolt: {}", tmp);
 }
 
+// used after shutdown, when plLog is no longer available - JPH::Trace must stay callable,
+// a null pointer there turns any late Jolt trace into an access violation
+static void JoltTraceDiscardFunc(const char* szText, ...)
+{
+}
+
 #ifdef JPH_ENABLE_ASSERTS
 
 static bool JoltAssertFailed(const char* szInExpression, const char* szInMessage, const char* szInFile, uint32_t inLine)
@@ -245,7 +251,7 @@ void plJoltCore::Shutdown()
   delete JPH::Factory::sInstance;
   JPH::Factory::sInstance = nullptr;
 
-  JPH::Trace = nullptr;
+  JPH::Trace = JoltTraceDiscardFunc;
 
   s_pAllocator.Clear();
   s_pAllocatorAligned.Clear();

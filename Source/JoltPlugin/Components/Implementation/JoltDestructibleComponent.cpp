@@ -2040,7 +2040,7 @@ void plJoltDestructibleComponent::OnMsgExtractRenderData(plMsgExtractRenderData&
       if (!hMaterial.IsValid())
       {
         // meshes with an invalid material are skipped by the renderer entirely
-        hMaterial = plResourceManager::LoadResource<plMaterialResource>(plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::Lit));
+        hMaterial = plResourceManager::LoadResource<plMaterialResource>(plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::OpenPBR));
       }
 
       plMeshRenderData* pRenderData = msg.m_pRenderDataManager->CreateRenderDataForThisFrame<plMeshRenderData>(GetOwner());

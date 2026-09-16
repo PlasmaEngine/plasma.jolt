@@ -6,9 +6,11 @@
 #include <Foundation/Utilities/Progress.h>
 #include <GameEngine/Destruction/VoronoiFracture.h>
 #include <JoltCooking/JoltCooking.h>
+#include <ModelImporter2/MeshletLodGenerator.h>
 #include <ModelImporter2/ModelImporter.h>
 #include <ModelImporter2/ModelPartConventions.h>
 #include <RendererCore/Material/MaterialResource.h>
+#include <RendererCore/Meshes/MeshletBuilder.h>
 #include <RendererCore/Meshes/MeshResourceDescriptor.h>
 
 #ifdef BUILDSYSTEM_ENABLE_ZSTD_SUPPORT
@@ -17,7 +19,7 @@
 
 // clang-format off
 // NOTE: bump the version with EVERY change that affects the baked output, or existing assets keep their stale (cached) transform results
-PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plDestructibleMeshAssetDocument, 11, plRTTINoAllocator)
+PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plDestructibleMeshAssetDocument, 14, plRTTINoAllocator)
 PL_END_DYNAMIC_REFLECTED_TYPE;
 // clang-format on
 
@@ -128,7 +130,7 @@ plTransformStatus plDestructibleMeshAssetDocument::InternalTransformAsset(plStre
     ApplyNativePropertyChangesToObjectManager();
     pProp = GetProperties(); // the object model may have been reallocated
 
-    const char* szDefaultMaterial = plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::Lit);
+    const char* szDefaultMaterial = plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::OpenPBR);
 
     for (plUInt32 i = 0; i < uiNumMaterials; ++i)
     {
@@ -174,7 +176,7 @@ plTransformStatus plDestructibleMeshAssetDocument::InternalTransformAsset(plStre
   plDestructibleMeshDescriptor desc;
 
   const plStringView sInteriorMaterial = pProp->m_sInteriorMaterial.IsEmpty()
-                                           ? plStringView(plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::Lit))
+                                           ? plStringView(plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::OpenPBR))
                                            : pProp->m_sInteriorMaterial.GetView();
 
   // per-slot toughness scales the baked chunk toughness (area-weighted over each chunk's surface materials)
@@ -186,6 +188,13 @@ plTransformStatus plDestructibleMeshAssetDocument::InternalTransformAsset(plStre
 
   if (fracture.BuildDescriptor(desc, sInteriorMaterial, materialToughness).Failed())
     return plStatus("Failed to build the destructible mesh data.");
+
+  // Full DAG build, not just LOD0 meshlets: chunks are sub-mesh ranges, so the builder's per-sub-mesh weld and
+  // simplification give each chunk its own meshlet LOD chain without ever crossing fracture borders.
+  if (plModelImporter2::GenerateMeshletLods(desc.m_RenderMesh).Failed())
+  {
+    plLog::Warning("Meshlet generation skipped because the fractured mesh data is unsupported or invalid.");
+  }
 
   desc.m_fSplitDamageThreshold = pProp->m_fSplitDamageThreshold;
   desc.m_uiSupportDepth = 1; // the runtime support graph starts at depth 1; deeper levels are exposed through chunk splitting

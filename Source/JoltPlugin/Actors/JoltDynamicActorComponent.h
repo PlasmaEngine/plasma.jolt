@@ -3,6 +3,8 @@
 #include <Foundation/Math/Float16.h>
 #include <JoltPlugin/Actors/JoltActorComponent.h>
 
+struct plMsgSaveGameRigidBody;
+
 //////////////////////////////////////////////////////////////////////////
 
 class PL_JOLTPLUGIN_DLL plJoltDynamicActorComponentManager : public plComponentManager<class plJoltDynamicActorComponent, plBlockStorageType::FreeList>
@@ -165,6 +167,10 @@ protected:
   void SetWeight_Scale(float fValue) { m_fWeightScale = fValue; }
   void SetWeight_Mass(float fValue) { m_fWeightMass = fValue; }
   void SetWeight_Density(float fValue) { m_fWeightDensity = fValue; }
+
+  void OnSaveGameRigidBody(plMsgSaveGameRigidBody& message);
+  plVec3 m_SaveLinearVelocity = plVec3::MakeZero();
+  plVec3 m_SaveAngularVelocity = plVec3::MakeZero();
 
   bool m_bKinematic = false;
   float m_fGravityFactor = 1.0f; // [ property ]

@@ -4,6 +4,7 @@
 #include <Core/WorldSerializer/WorldReader.h>
 #include <Core/WorldSerializer/WorldWriter.h>
 #include <Foundation/Profiling/Profiling.h>
+#include <GameEngine/SaveGame/BuiltinPersistence.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -109,6 +110,7 @@ PL_BEGIN_COMPONENT_TYPE(plJoltDynamicActorComponent, 7, plComponentMode::Dynamic
   PL_BEGIN_MESSAGEHANDLERS
   {
       PL_MESSAGE_HANDLER(plMsgPhysicsAddImpulse, AddLinearImpulseAtPos),
+      PL_MESSAGE_HANDLER(plMsgSaveGameRigidBody, OnSaveGameRigidBody),
   }
   PL_END_MESSAGEHANDLERS;
   PL_BEGIN_FUNCTIONS
@@ -287,6 +289,36 @@ void plJoltDynamicActorComponent::SetGravityFactor(float fFactor)
   }
 }
 
+void plJoltDynamicActorComponent::OnSaveGameRigidBody(plMsgSaveGameRigidBody& message)
+{
+  if (message.m_bHandled)
+    return;
+  if (message.m_bApply)
+  {
+    // Restores are staged before the body exists. Do not teleport an actively simulated body.
+    if (GetWorld()->GetWorldSimulationEnabled() || m_uiJoltBodyID != plInvalidIndex)
+      return;
+    m_SaveLinearVelocity = message.m_LinearVelocity;
+    m_SaveAngularVelocity = message.m_AngularVelocity;
+    m_bStartAsleep = message.m_bSleeping;
+  }
+  else if (m_uiJoltBodyID != plInvalidIndex)
+  {
+    auto& bodies = GetWorld()->GetOrCreateModule<plJoltWorldModule>()->GetJoltSystem()->GetBodyInterface();
+    const JPH::BodyID id(m_uiJoltBodyID);
+    message.m_LinearVelocity = plJoltConversionUtils::ToVec3(bodies.GetLinearVelocity(id));
+    message.m_AngularVelocity = plJoltConversionUtils::ToVec3(bodies.GetAngularVelocity(id));
+    message.m_bSleeping = !bodies.IsActive(id);
+  }
+  else
+  {
+    message.m_LinearVelocity = m_SaveLinearVelocity;
+    message.m_AngularVelocity = m_SaveAngularVelocity;
+    message.m_bSleeping = m_bStartAsleep;
+  }
+  message.m_bHandled = true;
+}
+
 void plJoltDynamicActorComponent::OnSimulationStarted()
 {
   SUPER::OnSimulationStarted();
@@ -315,6 +347,8 @@ void plJoltDynamicActorComponent::OnSimulationStarted()
 
   const float fInitialMass = plJoltCore::GetWeightCategoryConfig().GetMassForWeightCategory(m_uiWeightCategory, 10.0f, m_fWeightMass, m_fWeightScale);
 
+  bodyCfg.mLinearVelocity = plJoltConversionUtils::ToVec3(m_SaveLinearVelocity);
+  bodyCfg.mAngularVelocity = plJoltConversionUtils::ToVec3(m_SaveAngularVelocity);
   bodyCfg.mPosition = plJoltConversionUtils::ToVec3(trans.m_Position);
   bodyCfg.mRotation = plJoltConversionUtils::ToQuat(trans.m_Rotation).Normalized();
   bodyCfg.mMotionType = m_bKinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic;

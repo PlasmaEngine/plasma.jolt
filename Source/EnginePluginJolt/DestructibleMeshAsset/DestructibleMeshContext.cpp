@@ -163,7 +163,7 @@ void plDestructibleMeshContext::UpdatePreview()
 
       for (plUInt32 m = 0; m < materials.GetCount(); ++m)
       {
-        plStringView sMaterial = plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::Lit);
+        plStringView sMaterial = plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::OpenPBR);
         if (materials[m].IsValid())
         {
           sMaterial = materials[m].GetResourceID();
