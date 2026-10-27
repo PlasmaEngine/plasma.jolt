@@ -96,14 +96,21 @@ static void TestTempAllocatorUnwinding()
   alloc.Free(pAgain, 64);
 
   // randomized changing sizes: the allocator must stay inside its chunks and end empty
-  plHybridArray<plPair<void*, plUInt32>, 64> live;
+  struct LiveAllocation
+  {
+    void* m_pPtr;
+    plUInt32 m_uiSize;
+    PL_DECLARE_POD_TYPE();
+  };
+
+  plHybridArray<LiveAllocation, 64> live;
   plUInt32 uiSeed = 12345;
   for (plUInt32 i = 0; i < 400; ++i)
   {
     uiSeed = uiSeed * 1664525u + 1013904223u;
     if (!live.IsEmpty() && (uiSeed >> 24) % 3 == 0)
     {
-      alloc.Free(live.PeekBack().first, live.PeekBack().second);
+      alloc.Free(live.PeekBack().m_pPtr, live.PeekBack().m_uiSize);
       live.PopBack();
     }
     else
@@ -115,7 +122,7 @@ static void TestTempAllocatorUnwinding()
 
   while (!live.IsEmpty())
   {
-    alloc.Free(live.PeekBack().first, live.PeekBack().second);
+    alloc.Free(live.PeekBack().m_pPtr, live.PeekBack().m_uiSize);
     live.PopBack();
   }
 
