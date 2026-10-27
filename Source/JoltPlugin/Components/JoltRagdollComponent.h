@@ -222,6 +222,7 @@ protected:
   void CreateLimbsFromCurrentMeshPose();
   void DestroyAllLimbs();
   void CreateLimbsFromPose(const plMsgAnimationPoseUpdated& pose);
+  void CreatePendingLimbs();
   bool HasCreatedLimbs() const;
   plVec3 RetrieveRagdollPose();
   void SendAnimationPoseMsg();
@@ -246,6 +247,8 @@ protected:
 
   plSkeletonResourceHandle m_hSkeleton;
   plDynamicArray<plMat4> m_CurrentLimbTransforms;
+  plTransform m_PendingRootTransform;
+  bool m_bPendingPose = false;
   plMat4 m_mInvSkeletonRootTransform;
 
   plUInt32 m_uiObjectFilterID = plInvalidIndex;

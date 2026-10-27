@@ -15,10 +15,14 @@ const JPH::PhysicsMaterial* plJoltCustomShapeInfo::GetMaterial(const SubShapeID&
     {
       const JPH::MeshShape* pMeshShape = static_cast<const JPH::MeshShape*>(mInnerShape.GetPtr());
 
-      return m_CustomMaterials[pMeshShape->GetMaterialIndex(subShapeID)];
+      const plUInt32 uiIndex = pMeshShape->GetMaterialIndex(subShapeID);
+      if (uiIndex < m_CustomMaterials.GetCount() && m_CustomMaterials[uiIndex] != nullptr)
+        return m_CustomMaterials[uiIndex];
+      return mInnerShape->GetMaterial(subShapeID);
     }
 
-    return m_CustomMaterials[0];
+    if (m_CustomMaterials[0] != nullptr)
+      return m_CustomMaterials[0];
   }
 
   return mInnerShape->GetMaterial(subShapeID);

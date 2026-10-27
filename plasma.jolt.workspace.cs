@@ -10,5 +10,6 @@ public class PlasmaJoltWorkspace : WorkspaceRules
         TargetNames.Add("JoltPlugin");
         TargetNames.Add("EnginePluginJolt");
         TargetNames.Add("EditorPluginJolt");
+        TargetNames.Add("JoltP0Tests");
     }
 }

@@ -102,8 +102,17 @@ void plJoltActorComponent::OnDeactivated()
     m_uiJoltBodyID = JPH::BodyID::cInvalidBodyID;
   }
 
-  pModule->DeallocateUserData(m_uiUserDataIndex);
-  pModule->DeleteObjectFilterID(m_uiObjectFilterID);
+  if (pModule != nullptr)
+  {
+    // Shapes can outlive the components that authored them. Keep their invalidated
+    // slots reserved until the body stops referencing them, so slot reuse cannot
+    // redirect a retained shape to an unrelated component.
+    for (plUInt32 uiUserData : m_ShapeUserData)
+      pModule->ReleaseUserData(uiUserData);
+    m_ShapeUserData.Clear();
+    pModule->DeallocateUserData(m_uiUserDataIndex);
+    pModule->DeleteObjectFilterID(m_uiObjectFilterID);
+  }
 
   SUPER::OnDeactivated();
 }
@@ -117,6 +126,9 @@ void plJoltActorComponent::GatherShapes(plDynamicArray<plJoltSubShape>& shapes, 
   {
     if (pShape->IsActive())
     {
+      const plUInt32 uiUserData = pShape->GetUserDataIndex();
+      GetWorld()->GetModule<plJoltWorldModule>()->RetainUserData(uiUserData);
+      m_ShapeUserData.PushBack(uiUserData);
       pShape->CreateShapes(shapes, rootTransform, fDensity, pMaterial);
     }
   }

@@ -137,6 +137,7 @@ public:
   {
     m_Type = Type::Invalid;
     m_pObject = nullptr;
+    m_OnContact = plOnJoltContact::None;
   }
 
   PL_FORCE_INLINE static Type GetType(const void* pUserData)

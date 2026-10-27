@@ -83,6 +83,8 @@ void plDestructibleMeshContext::OnInitialize()
     plSkyLightComponent::CreateComponent(pObj, pSkyLight);
     pSkyLight->SetCubeMapFile("{ 0b202e08-a64f-465d-b38e-15b81d161822 }");
     pSkyLight->SetReflectionProbeMode(plReflectionProbeMode::Static);
+    // The preview lighting is unitless and tuned by eye: PI gives the sky the fill it was tuned with.
+    pSkyLight->SetDiffuseIntensity(plMath::Pi<float>());
   }
 
   {

@@ -2,6 +2,7 @@
 
 #include <Core/World/Component.h>
 #include <Core/World/World.h>
+#include <Core/Physics/SurfaceResource.h>
 #include <JoltPlugin/JoltPluginDLL.h>
 
 using plJoltTriangleMeshColliderComponentManager = plComponentManager<class plJoltTriangleMeshColliderComponent, plBlockStorageType::FreeList>;
@@ -27,4 +28,5 @@ private:
   plUInt32 m_uiJoltBodyID = plInvalidIndex;
   plUInt32 m_uiUserDataIndex = plInvalidIndex;
   plUInt32 m_uiObjectFilterID = plInvalidIndex;
+  plDynamicArray<plSurfaceResourceHandle> m_Surfaces;
 };

@@ -19,7 +19,7 @@
 
 // clang-format off
 // NOTE: bump the version with EVERY change that affects the baked output, or existing assets keep their stale (cached) transform results
-PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plDestructibleMeshAssetDocument, 14, plRTTINoAllocator)
+PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plDestructibleMeshAssetDocument, 15, plRTTINoAllocator)
 PL_END_DYNAMIC_REFLECTED_TYPE;
 // clang-format on
 
@@ -59,7 +59,7 @@ plTransformStatus plDestructibleMeshAssetDocument::InternalTransformAsset(plStre
   plHybridArray<plBoundingBox, 4> anchorVolumes;
   {
     plStringBuilder sAbsFilename = pProp->m_sMeshFile;
-    if (!plQtEditorApp::GetSingleton()->MakeDataDirectoryRelativePathAbsolute(sAbsFilename))
+    if (!plEditorApp::GetSingleton()->MakeDataDirectoryRelativePathAbsolute(sAbsFilename))
     {
       return plStatus(plFmt("Couldn't make path absolute: '{0}'", sAbsFilename));
     }
@@ -308,9 +308,9 @@ plStatus plDestructibleMeshAssetDocumentGenerator::Generate(plStringView sInputF
   }
 
   plStringBuilder sInputFileRel = sInputFileAbs;
-  plQtEditorApp::GetSingleton()->MakePathDataDirectoryRelative(sInputFileRel);
+  plEditorApp::GetSingleton()->MakePathDataDirectoryRelative(sInputFileRel);
 
-  plDocument* pDoc = plQtEditorApp::GetSingleton()->CreateDocument(sOutFile, plDocumentFlags::None);
+  plDocument* pDoc = plEditorApp::GetSingleton()->CreateDocument(sOutFile, plDocumentFlags::None);
   if (pDoc == nullptr)
     return plStatus("Could not create target destructible mesh document.");
 

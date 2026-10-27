@@ -47,8 +47,11 @@ void plJoltHeightfieldColliderComponent::OnDeactivated()
 
     pModule->DeallocateUserData(m_uiUserDataIndex);
     pModule->DeleteObjectFilterID(m_uiObjectFilterID);
-    pModule->ReleaseHeightfieldCacheEntry(m_sCacheIdentifier);
+    pModule->ReleaseHeightfieldCacheEntry(m_sCacheIdentifier, m_pCacheEntry.Borrow());
   }
+
+  m_pCacheEntry.Clear();
+  m_sCacheIdentifier.Clear();
 
   SUPER::OnDeactivated();
 }

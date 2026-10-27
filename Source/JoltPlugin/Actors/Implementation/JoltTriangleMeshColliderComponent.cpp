@@ -49,6 +49,7 @@ void plJoltTriangleMeshColliderComponent::OnDeactivated()
     pModule->DeleteObjectFilterID(m_uiObjectFilterID);
   }
 
+  m_Surfaces.Clear();
   SUPER::OnDeactivated();
 }
 

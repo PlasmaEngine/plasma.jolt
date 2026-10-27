@@ -401,6 +401,22 @@ plStatus plJoltCooking::WriteResourceToStream(plChunkStreamWriter& inout_stream,
   if (resCooking.Failed())
     return plStatus("Cooking the collision mesh failed.");
 
+  if (meshType == MeshType::ConvexHullGroup)
+  {
+    plSet<plUInt16> surfaceIndices;
+    for (plUInt16 uiSurface : mesh.m_PolygonSurfaceID)
+    {
+      if (uiSurface != 0xFFFF)
+        surfaceIndices.Insert(uiSurface);
+    }
+
+    inout_stream.BeginChunk("ConvexSurfaceMapping", 1);
+    inout_stream << static_cast<plUInt16>(surfaceIndices.GetCount());
+    for (plUInt16 uiSurface : surfaceIndices)
+      inout_stream << uiSurface;
+    inout_stream.EndChunk();
+  }
+
 
   return plStatus(PL_SUCCESS);
 }
@@ -513,7 +529,10 @@ plResult plJoltCooking::CookConvexHullGroup(const plJoltCookingMesh& meshSrc, pl
     const plUInt16 materialID = meshSrc.m_PolygonSurfaceID[faceIdx];
 
     if (materialID == 0xFFFF)
+    {
+      uiVertexIdx += numVertices;
       continue;
+    }
 
     plJoltCookingMesh& meshPart = parts[materialID];
 

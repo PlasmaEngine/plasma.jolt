@@ -5,8 +5,8 @@ PluginInfo
 {
 	string %DisplayName{"Jolt Physics"}
 	string %Category{"Physics"}
-	string %MinEngineVersion{"0.7.0"}
-	string %MaxEngineVersion{"0.7.0"}
+	string %MinEngineVersion{"0.11.2"}
+	string %MaxEngineVersion{"0.11.2"}
 	string %Description{"Adds support for 3D physics simulation via Jolt."}
 	string %EditorPlugins{"plEditorPluginJolt"}
 	string %EditorEnginePlugins{"plEnginePluginJolt"}

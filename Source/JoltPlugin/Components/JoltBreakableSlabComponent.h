@@ -4,6 +4,7 @@
 
 #include <Core/ResourceManager/ResourceHandle.h>
 #include <Foundation/Threading/TaskSystem.h>
+#include <Foundation/Math/Random.h>
 #include <GameEngine/Physics/Breakable2D.h>
 #include <RendererCore/Components/RenderComponent.h>
 #include <RendererCore/Meshes/SkinnedMeshRenderData.h>
@@ -110,13 +111,22 @@ struct plShatterPoint
 class plShatterTask : public plTask
 {
 public:
-  plJoltBreakableSlabComponent* m_pComponent = nullptr;
+  // Task-owned snapshot: the worker never dereferences a component or world.
+  plBreakable2D m_Breakable;
+  plTransform m_GlobalInverse;
+  plRandom m_Random;
+  plUInt32 m_uiFirstShard = 0;
+  float m_fWidth = 1.0f;
+  float m_fHeight = 1.0f;
+  float m_fThickness = 0.02f;
+  plVec2 m_vUvScale = plVec2(1.0f);
   plHybridArray<JPH::Ref<JPH::ConvexShape>, 128> m_Shapes;
   plMeshResourceHandle m_hShardsMesh;
   plHybridArray<plShatterPoint, 8> m_ShatterPoints;
   plVec3 m_vFinalImpulse;
 
 protected:
+  void PrepareBreak();
   virtual void Execute() override;
 };
 
@@ -208,13 +218,14 @@ public:
 private:
   friend class plShatterTask;
 
-  void PrepareBreakAsync(plDynamicArray<JPH::Ref<JPH::ConvexShape>>& out_Shapes, plArrayPtr<const plShatterPoint> points);
   void ApplyBreak(plArrayPtr<JPH::Ref<JPH::ConvexShape>> shapes, const plMeshResourceHandle& hMesh, const plVec3& vImpulse);
   void DebugDraw();
   void Cleanup();
   void ReinitMeshes();
   plMeshResourceHandle CreateShardsMesh() const;
+  static plMeshResourceHandle CreateShardsMesh(const plBreakable2D& breakable, float fWidth, float fHeight, float fThickness, const plVec2& vUvScale);
   void PrepareShardColliders(plUInt32 uiFirstShard, plDynamicArray<JPH::Ref<JPH::ConvexShape>>& out_Shapes) const;
+  static void PrepareShardColliders(const plBreakable2D& breakable, float fThickness, plUInt32 uiFirstShard, plDynamicArray<JPH::Ref<JPH::ConvexShape>>& out_Shapes);
   void CreateShardColliders(plUInt32 uiFirstShard, plArrayPtr<JPH::Ref<JPH::ConvexShape>> shapes);
   void DestroyAllShardColliders();
   void DestroyShardCollider(plUInt32 uiShardIdx, JPH::BodyInterface& jphBodies, bool bUpdateVis);
@@ -232,7 +243,7 @@ private:
   void OnMsgCustomInstanceDataOffsetChanged(plMsgCustomInstanceDataOffsetChanged& ref_msg); // [ msg handler ]
 
   void OnMsgExtractRenderData(plMsgExtractRenderData& msg) const;
-  void BuildMeshResourceFromGeometry(plGeometry& Geometry, plMeshResourceDescriptor& MeshDesc, bool bWithSkinningData) const;
+  static void BuildMeshResourceFromGeometry(plGeometry& Geometry, plMeshResourceDescriptor& MeshDesc, bool bWithSkinningData);
   const plJoltMaterial* GetPhysicsMaterial();
 
   float m_fGravityFactor = 1.0f;

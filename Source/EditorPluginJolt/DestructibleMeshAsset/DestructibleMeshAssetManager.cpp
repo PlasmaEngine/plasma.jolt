@@ -2,8 +2,7 @@
 
 #include <EditorPluginJolt/DestructibleMeshAsset/DestructibleMeshAsset.h>
 #include <EditorPluginJolt/DestructibleMeshAsset/DestructibleMeshAssetManager.h>
-#include <EditorPluginJolt/DestructibleMeshAsset/DestructibleMeshAssetWindow.moc.h>
-#include <GuiFoundation/UIServices/ImageCache.moc.h>
+#include <EditorPluginJolt/DestructibleMeshAsset/DestructibleMeshAssetWindow.h>
 
 PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plDestructibleMeshAssetDocumentManager, 1, plRTTIDefaultAllocator<plDestructibleMeshAssetDocumentManager>)
 PL_END_DYNAMIC_REFLECTED_TYPE;
@@ -22,8 +21,6 @@ plDestructibleMeshAssetDocumentManager::plDestructibleMeshAssetDocumentManager()
 
   m_DocTypeDesc.m_sResourceFileExtension = "plDestructibleMesh";
   m_DocTypeDesc.m_AssetDocumentFlags = plAssetDocumentFlags::AutoTransformOnSave | plAssetDocumentFlags::SupportsThumbnail;
-
-  plQtImageCache::GetSingleton()->RegisterTypeImage("DestructibleMesh", QPixmap(":/AssetIcons/DestructibleMesh.svg"));
 }
 
 plDestructibleMeshAssetDocumentManager::~plDestructibleMeshAssetDocumentManager()
@@ -39,7 +36,7 @@ void plDestructibleMeshAssetDocumentManager::OnDocumentManagerEvent(const plDocu
     {
       if (e.m_pDocument->GetDynamicRTTI() == plGetStaticRTTI<plDestructibleMeshAssetDocument>())
       {
-        new plQtDestructibleMeshAssetDocumentWindow(static_cast<plAssetDocument*>(e.m_pDocument)); // NOLINT: not a memory leak
+        new plDestructibleMeshAssetDocumentWindow(static_cast<plAssetDocument*>(e.m_pDocument)); // NOLINT: not a memory leak
       }
     }
     break;

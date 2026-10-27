@@ -89,9 +89,13 @@ void plJoltDestructibleComponentManager::PostAsyncUpdate(const plWorldModule::Up
   {
     componentsToUpdate.Insert(pComponent);
   }
-  for (plJoltDestructibleComponent* pComponent : pModule->GetDestructiblesPutToSleep())
+  plHybridArray<plComponentHandle, 16> sleepingDestructibles;
+  sleepingDestructibles = pModule->GetDestructiblesPutToSleep();
+  for (const auto& hComponent : sleepingDestructibles)
   {
-    componentsToUpdate.Insert(pComponent);
+    plJoltDestructibleComponent* pComponent = nullptr;
+    if (TryGetComponent(hComponent, pComponent) && pComponent->IsActiveAndSimulating())
+      componentsToUpdate.Insert(pComponent);
   }
   for (plJoltDestructibleComponent* pComponent : m_FadingDestructibles)
   {

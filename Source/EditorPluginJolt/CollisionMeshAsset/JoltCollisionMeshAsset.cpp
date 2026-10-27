@@ -133,7 +133,7 @@ plStatus plJoltCollisionMeshAssetDocument::CreateMeshFromFile(plJoltCookingMesh&
   plJoltCollisionMeshAssetProperties* pProp = GetProperties();
 
   plStringBuilder sAbsFilename = pProp->m_sMeshFile;
-  if (!plQtEditorApp::GetSingleton()->MakeDataDirectoryRelativePathAbsolute(sAbsFilename))
+  if (!plEditorApp::GetSingleton()->MakeDataDirectoryRelativePathAbsolute(sAbsFilename))
   {
     return plStatus(plFmt("Couldn't make path absolute: '{0};", sAbsFilename));
   }
@@ -426,7 +426,7 @@ plStatus plJoltCollisionMeshAssetDocumentGenerator::Generate(plStringView sInput
     return plStatus(PL_SUCCESS);
   }
 
-  auto pApp = plQtEditorApp::GetSingleton();
+  auto pApp = plEditorApp::GetSingleton();
 
   plStringBuilder sInputFileRel = sInputFileAbs;
   pApp->MakePathDataDirectoryRelative(sInputFileRel);
@@ -485,7 +485,7 @@ plStatus plJoltConvexCollisionMeshAssetDocumentGenerator::Generate(plStringView 
     return plStatus(PL_SUCCESS);
   }
 
-  auto pApp = plQtEditorApp::GetSingleton();
+  auto pApp = plEditorApp::GetSingleton();
 
   plStringBuilder sInputFileRel = sInputFileAbs;
   pApp->MakePathDataDirectoryRelative(sInputFileRel);

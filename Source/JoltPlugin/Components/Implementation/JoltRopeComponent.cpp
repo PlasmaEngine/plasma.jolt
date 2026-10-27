@@ -552,6 +552,15 @@ plResult plJoltRopeComponent::CreateSegmentTransforms(plDynamicArray<plTransform
     // we could also drastically ramp up the simulation steps, but that costs way too much performance
     const float fIntendedRopeLength = fLength + fLength * (plMath::Abs(m_fSlack) - 0.1f);
 
+    const plUInt32 uiFixedPieces =
+      (m_Anchor1ConstraintMode == plJoltRopeAnchorConstraintMode::Cone || m_Anchor1ConstraintMode == plJoltRopeAnchorConstraintMode::Fixed ? 1u : 0u) +
+      (m_Anchor2ConstraintMode == plJoltRopeAnchorConstraintMode::Cone || m_Anchor2ConstraintMode == plJoltRopeAnchorConstraintMode::Fixed ? 1u : 0u);
+    if (m_uiPieces <= uiFixedPieces)
+    {
+      plLog::Error("Rope requires more pieces than its {} fixed anchor pieces. Increase Pieces.", uiFixedPieces);
+      return PL_FAILURE;
+    }
+
     const float fPieceLength = fIntendedRopeLength / m_uiPieces;
 
     plUInt16 uiSimulatedPieces = m_uiPieces;

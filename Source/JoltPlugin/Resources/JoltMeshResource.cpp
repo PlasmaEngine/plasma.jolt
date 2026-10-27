@@ -61,6 +61,8 @@ plJoltMeshResource::~plJoltMeshResource() = default;
 
 plResourceLoadDesc plJoltMeshResource::UnloadData(Unload WhatToUnload)
 {
+  PL_LOCK(m_InstanceMutex);
+  m_ConvexSurfaceIndices.Clear();
   for (auto pMesh : m_ConvexMeshesData)
   {
     if (pMesh != nullptr)
@@ -261,6 +263,15 @@ plResourceLoadDesc plJoltMeshResource::UpdateContent(plStreamReader* Stream)
         }
       }
 
+      if (chunk.GetCurrentChunk().m_sChunkName == "ConvexSurfaceMapping")
+      {
+        plUInt16 uiNumParts = 0;
+        chunk >> uiNumParts;
+        m_ConvexSurfaceIndices.SetCount(uiNumParts);
+        for (plUInt16& uiSurface : m_ConvexSurfaceIndices)
+          chunk >> uiSurface;
+      }
+
       chunk.NextChunk();
     }
 
@@ -278,6 +289,7 @@ plResourceLoadDesc plJoltMeshResource::UpdateContent(plStreamReader* Stream)
 
 void plJoltMeshResource::UpdateMemoryUsage(MemoryUsage& out_NewMemoryUsage)
 {
+  PL_LOCK(m_InstanceMutex);
   out_NewMemoryUsage.m_uiMemoryCPU = sizeof(plJoltMeshResource);
   out_NewMemoryUsage.m_uiMemoryGPU = 0;
 
@@ -385,6 +397,7 @@ plCpuMeshResourceHandle plJoltMeshResource::ConvertToCpuMesh() const
 
 JPH::Shape* plJoltMeshResource::InstantiateTriangleMesh(plUInt64 uiUserData, const plDynamicArray<const plJoltMaterial*>& materials) const
 {
+  PL_LOCK(m_InstanceMutex);
   if (m_pTriangleMeshInstance == nullptr)
   {
     PL_ASSERT_DEV(!m_TriangleMeshData.IsEmpty(), "Jolt mesh resource doesn't contain a triangle mesh.");
@@ -443,6 +456,7 @@ JPH::Shape* plJoltMeshResource::InstantiateTriangleMesh(plUInt64 uiUserData, con
   {
     plJoltCustomShapeInfo* pShapeDeco = new plJoltCustomShapeInfo(m_pTriangleMeshInstance);
     pShapeDeco->SetUserData(uiUserData);
+    pShapeDeco->m_SurfaceOwners = m_Surfaces;
 
     // only override the materials, if they differ
     if (materials.GetCount() == m_Surfaces.GetCount())
@@ -451,6 +465,8 @@ JPH::Shape* plJoltMeshResource::InstantiateTriangleMesh(plUInt64 uiUserData, con
       for (plUInt32 i = 0; i < materials.GetCount(); ++i)
       {
         pShapeDeco->m_CustomMaterials[i] = materials[i];
+        if (materials[i] != nullptr && materials[i]->m_pSurface != nullptr)
+          pShapeDeco->m_SurfaceOwners.PushBack(materials[i]->m_pSurface->GetResourceHandle());
       }
     }
 
@@ -461,6 +477,10 @@ JPH::Shape* plJoltMeshResource::InstantiateTriangleMesh(plUInt64 uiUserData, con
 
 JPH::Shape* plJoltMeshResource::InstantiateConvexPart(plUInt32 uiPartIdx, plUInt64 uiUserData, const plJoltMaterial* pMaterial, float fDensity) const
 {
+  PL_LOCK(m_InstanceMutex);
+  if (uiPartIdx >= m_ConvexMeshInstances.GetCount())
+    return nullptr;
+
   if (m_ConvexMeshInstances[uiPartIdx] == nullptr)
   {
     PL_ASSERT_DEV(!m_ConvexMeshesData.IsEmpty(), "Jolt mesh resource doesn't contain any convex mesh.");
@@ -510,9 +530,12 @@ JPH::Shape* plJoltMeshResource::InstantiateConvexPart(plUInt32 uiPartIdx, plUInt
 
     if (materials.GetCount() > 1)
     {
-      if (materials.GetCount() > uiPartIdx)
+      // Group parts are sorted by surface ID, which need not be contiguous. New
+      // cooked files retain that mapping instead of mistaking the part index for it.
+      const plUInt32 uiSurfaceIdx = uiPartIdx < m_ConvexSurfaceIndices.GetCount() ? m_ConvexSurfaceIndices[uiPartIdx] : 0;
+      if (materials.GetCount() > uiSurfaceIdx)
       {
-        JPH::PhysicsMaterialRefC pMat = materials[uiPartIdx];
+        JPH::PhysicsMaterialRefC pMat = materials[uiSurfaceIdx];
         materials.SetCount(1);
         materials[0] = pMat;
       }
@@ -534,11 +557,13 @@ JPH::Shape* plJoltMeshResource::InstantiateConvexPart(plUInt32 uiPartIdx, plUInt
     plJoltCustomShapeInfo* pShapeDeco = new plJoltCustomShapeInfo(m_ConvexMeshInstances[uiPartIdx]);
     pShapeDeco->SetUserData(uiUserData);
     pShapeDeco->m_fDensity = fDensity;
+    pShapeDeco->m_SurfaceOwners = m_Surfaces;
 
     if (pMaterial && pMaterial->m_pSurface != nullptr)
     {
       pShapeDeco->m_CustomMaterials.SetCount(1);
       pShapeDeco->m_CustomMaterials[0] = pMaterial;
+      pShapeDeco->m_SurfaceOwners.PushBack(pMaterial->m_pSurface->GetResourceHandle());
     }
 
     pShapeDeco->AddRef();

@@ -58,6 +58,13 @@ struct plJoltForce
 
 using plJoltForceId = plGenericId<24, 8>;
 
+struct plJoltHeightfieldCacheEntry : public plRefCounted
+{
+  JPH::Ref<JPH::Shape> m_pShape;
+  plDynamicArray<plSurfaceResourceHandle> m_Surfaces;
+  plDynamicArray<const plJoltMaterial*> m_MaterialPtrs;
+};
+
 class PL_JOLTPLUGIN_DLL plJoltWorldModule : public plPhysicsWorldModuleInterface
 {
   PL_DECLARE_WORLD_MODULE();
@@ -81,6 +88,8 @@ public:
 
   plUInt32 AllocateUserData(plJoltUserData*& out_pUserData);
   void DeallocateUserData(plUInt32& ref_uiUserDataId);
+  void RetainUserData(plUInt32 uiUserDataId);
+  void ReleaseUserData(plUInt32 uiUserDataId);
   const plJoltUserData& GetUserData(plUInt32 uiUserDataId) const;
 
   void SetGravity(const plVec3& vObjectGravity, const plVec3& vCharacterGravity);
@@ -93,6 +102,13 @@ public:
 
   /// \brief Queues an impulse to be applied on the given body as soon as that body is added to the Jolt scene.
   void AddImpulse(plUInt32 uiBodyID, const plVec3& vImpulse);
+
+  /// \brief Returns how many queued impulses are still waiting for their body to be added to the Jolt scene.
+  plUInt32 GetQueuedImpulseCount()
+  {
+    PL_LOCK(m_ImpulsesMutex);
+    return m_Impulses.GetCount();
+  }
 
   /// \brief Queues an angular impulse to be applied on the given body as soon as that body is added to the Jolt scene.
   void AddTorque(plUInt32 uiBodyID, const plVec3& vImpulse);
@@ -166,11 +182,11 @@ public:
   const plSet<plJoltDynamicActorComponent*>& GetActiveActors() const { return m_ActiveActors; }
   const plMap<plJoltRopeComponent*, plInt32>& GetActiveRopes() const { return m_ActiveRopes; }
   const plMap<plJoltRagdollComponent*, plInt32>& GetActiveRagdolls() const { return m_ActiveRagdolls; }
-  plArrayPtr<plJoltRagdollComponent*> GetRagdollsPutToSleep() { return m_RagdollsPutToSleep.GetArrayPtr(); }
+  plArrayPtr<plComponentHandle> GetRagdollsPutToSleep() { return m_RagdollsPutToSleep.GetArrayPtr(); }
   const plMap<plJoltBreakableSlabComponent*, plInt32>& GetActiveSlabs() const { return m_ActiveSlabs; }
-  plArrayPtr<plJoltBreakableSlabComponent*> GetSlabsPutToSleep() { return m_SlabsPutToSleep.GetArrayPtr(); }
+  plArrayPtr<plComponentHandle> GetSlabsPutToSleep() { return m_SlabsPutToSleep.GetArrayPtr(); }
   const plMap<plJoltDestructibleComponent*, plInt32>& GetActiveDestructibles() const { return m_ActiveDestructibles; }
-  plArrayPtr<plJoltDestructibleComponent*> GetDestructiblesPutToSleep() { return m_DestructiblesPutToSleep.GetArrayPtr(); }
+  plArrayPtr<plComponentHandle> GetDestructiblesPutToSleep() { return m_DestructiblesPutToSleep.GetArrayPtr(); }
 
   void QueueBodyToAdd(JPH::Body* pBody, bool bAwake);
   void RemoveBodyFromQueue(JPH::BodyID bodyId);
@@ -207,22 +223,16 @@ public:
   /// Can be used to detect when no physics update was done (at high frame rates) to skip duplicate physics modifications.
   plUInt64 GetJoltUpdateCounter() const { return m_uiJoltUpdateCounter; }
 
-  void ReleaseHeightfieldCacheEntry(plStringView sIdentifier);
+  void ReleaseHeightfieldCacheEntry(plStringView sIdentifier, const plJoltHeightfieldCacheEntry* pEntry);
 
 private:
-  struct HeightfieldCacheEntry
-  {
-    JPH::Ref<JPH::Shape> m_pShape;
-    plDynamicArray<plSurfaceResourceHandle> m_Surfaces;
-    plDynamicArray<const plJoltMaterial*> m_MaterialPtrs;
-    plUInt32 m_uiRefCount = 0;
-  };
+  using HeightfieldCacheEntry = plJoltHeightfieldCacheEntry;
 
   bool SweepTest(plPhysicsCastResult& out_Result, const JPH::Shape& shape, const JPH::Mat44& transform, const plVec3& vDir, float fDistance, const plPhysicsQueryParameters& params, plPhysicsHitCollection collection) const;
   static plResult BuildJoltHeightfieldShape(const plPhysicsWorldModuleInterface::HeightfieldColliderData& data, HeightfieldCacheEntry& out_Data);
-  static void AttachHeightfieldBody(plJoltWorldModule* pModule, plGameObject* pOwner, HeightfieldCacheEntry& cacheEntry, plUInt8 uiCollisionLayer, plStringView sCacheIdentifier);
+  static plResult AttachHeightfieldBody(plJoltWorldModule* pModule, plGameObject* pOwner, plSharedPtr<HeightfieldCacheEntry> pEntry, plUInt8 uiCollisionLayer, plStringView sCacheIdentifier);
   static plResult BuildJoltTriangleMeshShape(const plPhysicsWorldModuleInterface::TriangleMeshColliderData& data, JPH::Ref<JPH::Shape>& out_pShape, const plJoltMaterial*& out_pFirstMaterial);
-  static void AttachTriangleMeshBody(plJoltWorldModule* pModule, plGameObject* pOwner, JPH::Ref<JPH::Shape> pShape, const plJoltMaterial* pMaterial, plUInt8 uiCollisionLayer);
+  static void AttachTriangleMeshBody(plJoltWorldModule* pModule, plGameObject* pOwner, JPH::Ref<JPH::Shape> pShape, const plJoltMaterial* pMaterial, plUInt8 uiCollisionLayer, plArrayPtr<const plSurfaceResourceHandle> surfaces);
   bool OverlapTest(const JPH::Shape& shape, const JPH::Mat44& transform, const plPhysicsQueryParameters& params) const;
   void QueryShapes(plPhysicsOverlapResultArray& out_results, const JPH::Shape& shape, const JPH::Mat44& transform, const plPhysicsQueryParameters& params) const;
 
@@ -289,6 +299,7 @@ private:
   plDynamicArray<plUInt32> m_FreeObjectFilterIDs;
 
   plDeque<plJoltUserData> m_AllocatedUserData;
+  plDynamicArray<plUInt32> m_UserDataRefCounts;
   plDynamicArray<plUInt32> m_FreeUserData;
   plDynamicArray<plUInt32> m_FreeUserDataAfterSimulationStep;
 
@@ -314,11 +325,11 @@ private:
   plSet<plJoltDynamicActorComponent*> m_ActiveActors;
   plMap<plJoltRopeComponent*, plInt32> m_ActiveRopes;
   plMap<plJoltRagdollComponent*, plInt32> m_ActiveRagdolls;
-  plDynamicArray<plJoltRagdollComponent*> m_RagdollsPutToSleep;
+  plDynamicArray<plComponentHandle> m_RagdollsPutToSleep;
   plMap<plJoltBreakableSlabComponent*, plInt32> m_ActiveSlabs;
-  plDynamicArray<plJoltBreakableSlabComponent*> m_SlabsPutToSleep;
+  plDynamicArray<plComponentHandle> m_SlabsPutToSleep;
   plMap<plJoltDestructibleComponent*, plInt32> m_ActiveDestructibles;
-  plDynamicArray<plJoltDestructibleComponent*> m_DestructiblesPutToSleep;
+  plDynamicArray<plComponentHandle> m_DestructiblesPutToSleep;
 
   JPH::GroupFilter* m_pGroupFilter = nullptr;
   JPH::GroupFilter* m_pGroupFilterIgnoreSame = nullptr;
@@ -331,7 +342,7 @@ private:
   plHybridArray<plJoltCharacterControllerComponent*, 4> m_ActiveCharacters;
 
   // Maps identifier strings to cached Jolt heightfield shapes. Shapes are ref-counted; the cache holds one ref each.
-  plMap<plString, HeightfieldCacheEntry> m_HeightfieldShapeCache;
+  plMap<plString, plSharedPtr<HeightfieldCacheEntry>> m_HeightfieldShapeCache;
 
   plMutex m_ImpulsesMutex;
   plDeque<plJoltImpulse> m_Impulses;
