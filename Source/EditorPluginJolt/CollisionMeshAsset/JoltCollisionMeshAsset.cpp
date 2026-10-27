@@ -14,7 +14,7 @@
 #endif
 
 // clang-format off
-PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plJoltCollisionMeshAssetDocument, 10, plRTTINoAllocator)
+PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plJoltCollisionMeshAssetDocument, 11, plRTTINoAllocator)
 PL_END_DYNAMIC_REFLECTED_TYPE;
 // clang-format on
 
@@ -65,7 +65,7 @@ plTransformStatus plJoltCollisionMeshAssetDocument::InternalTransformAsset(plStr
 
   plJoltCollisionMeshAssetProperties* pProp = GetProperties();
 
-  PL_ASSERT_DEV(AssetHeader.GetFileVersion() == 10, "Version change");
+  PL_ASSERT_DEV(AssetHeader.GetFileVersion() == 11, "Version change");
   // Please check that the code here is in sync with plSceneExportModifier_JoltStaticMeshConversion::ModifyWorld()
 
   const plUInt8 uiVersion = 3; // read in plJoltMeshResource::UpdateContent()
