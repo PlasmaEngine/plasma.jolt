@@ -122,6 +122,7 @@ static void TestCompoundTrigger()
     {
       PL_LOCK(test.GetWorld().GetWriteMarker());
       plGameObjectDesc desc;
+      desc.m_bDynamic = true;
       desc.m_hParent = pTrigger->GetHandle();
       desc.m_LocalPosition = plVec3(fOffset, 0, 0);
       test.GetWorld().CreateObject(desc, pChild);

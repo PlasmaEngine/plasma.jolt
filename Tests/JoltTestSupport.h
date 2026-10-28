@@ -84,6 +84,9 @@ namespace JoltTest
   /// \brief Returns the default query parameters that find every kind of shape.
   plPhysicsQueryParameters AllShapes(plUInt32 uiLayer = 0);
 
+  /// \brief Counts the different actor objects among the results of a ray cast.
+  plUInt32 CountDistinctActors(const plPhysicsCastResultArray& results);
+
   /// \brief Starts the engine systems the tests need. Call once before any test.
   void Startup();
 

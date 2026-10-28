@@ -37,6 +37,17 @@ its check starts passing and the item disappears from the list.
 `--stress` runs `JoltStressScene.cpp` instead of the groups. It spawns and deletes bodies, creates and deletes breakable
 joints and ragdoll components, keeps a character walking and sweeps box overlaps and ray casts over a 200 m square.
 
+## Open R1 items
+
+These show as `OPEN R1` today. Each one is a real behaviour gap that the check was written against:
+
+- `GetGravity()` returns a hard-coded -10 instead of the configured gravity
+- A body that overlaps two child shapes of one trigger is reported more than once
+- A sweep with `m_bIgnoreInitialOverlap` still reports the shape it starts inside
+- Fixed constraint break force is compared with `ReduceMax()` of the solver lambda, which is negative under load, so a hanging box does not break the joint and the unit is a per-step impulse rather than newtons
+
+`RaycastAll` also reports a convex shape twice (entry and exit face). The tests count distinct actors, so they do not depend on it.
+
 ## Not covered here
 
 These need assets that a headless run does not have, so they are run from a project scene:

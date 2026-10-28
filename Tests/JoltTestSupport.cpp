@@ -83,6 +83,7 @@ namespace JoltTest
     plGameObjectDesc desc;
     desc.m_LocalPosition = vPosition;
     desc.m_LocalRotation = qRotation;
+    desc.m_bDynamic = true;
 
     plGameObject* pObject = nullptr;
     m_pWorld->CreateObject(desc, pObject);
@@ -154,15 +155,23 @@ namespace JoltTest
     return plPhysicsQueryParameters(uiLayer, plPhysicsShapeType::Default);
   }
 
+  plUInt32 CountDistinctActors(const plPhysicsCastResultArray& results)
+  {
+    plSet<plGameObjectHandle> actors;
+    for (const plPhysicsCastResult& result : results.m_Results)
+      actors.Insert(result.m_hActorObject);
+
+    return actors.GetCount();
+  }
+
   void Startup()
   {
+    // the high level systems bring up the renderer, which needs a GPU device; Jolt starts with the core systems
     plStartup::StartupCoreSystems();
-    plStartup::StartupHighLevelSystems();
   }
 
   void Shutdown()
   {
-    plStartup::ShutdownHighLevelSystems();
     plStartup::ShutdownCoreSystems();
   }
 } // namespace JoltTest

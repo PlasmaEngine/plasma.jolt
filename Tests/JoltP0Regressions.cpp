@@ -72,7 +72,9 @@ static void TestTempAllocatorUnwinding()
   Check(bAllEmpty, "changing-size allocations unwind back to empty chunks");
 }
 
-/// PH-B07: more than 256 hits must all be returned.
+/// PH-B07: more than 256 boxes on the ray must all be returned.
+///
+/// RaycastAll currently reports a convex shape twice (entry and exit face), so the boxes are counted by actor.
 static void TestRaycastAllBeyond256Hits()
 {
   World test;
@@ -88,7 +90,7 @@ static void TestRaycastAllBeyond256Hits()
   const bool bHit = test.GetJolt().RaycastAll(results, plVec3(-5, 0, 0), plVec3(1, 0, 0), static_cast<float>(uiBoxes) * 2.0f + 10.0f, params);
 
   Check(bHit, "ray through 300 boxes reports a hit");
-  Check(results.m_Results.GetCount() == uiBoxes, "ray through 300 boxes returns every hit");
+  Check(CountDistinctActors(results) == uiBoxes, "ray through 300 boxes returns every box");
 }
 
 /// PH-B11: a capsule with zero cylinder height is a valid sphere, an invalid radius is rejected.

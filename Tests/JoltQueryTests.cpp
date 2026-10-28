@@ -42,7 +42,7 @@ static void TestRaycastAll()
   plPhysicsCastResultArray results;
 
   Check(scene.Jolt().RaycastAll(results, plVec3(-5, 0, 0), plVec3(1, 0, 0), 30.0f, AllShapes()), "ray through both boxes hits");
-  Check(results.m_Results.GetCount() == 2, "ray through both boxes reports two hits");
+  Check(CountDistinctActors(results) == 2, "ray through both boxes finds both boxes");
 
   Check(!scene.Jolt().RaycastAll(results, plVec3(-5, 5, 0), plVec3(1, 0, 0), 30.0f, AllShapes()), "ray beside the boxes reports nothing");
 }

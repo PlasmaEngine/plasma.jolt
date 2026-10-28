@@ -57,7 +57,10 @@ public:
   explicit Boat(float fFrameRate)
     : m_World(fFrameRate)
   {
-    m_World.GetWorld().GetOrCreateModule<TestWaterModule>();
+    {
+      PL_LOCK(m_World.GetWorld().GetWriteMarker());
+      m_World.GetWorld().GetOrCreateModule<TestWaterModule>();
+    }
 
     m_pObject = m_World.AddDynamicBox(plVec3(0, 0, -1.0f), plVec3(1.0f, 1.0f, 0.5f));
 
@@ -66,27 +69,40 @@ public:
     plJoltDynamicActorComponent* pActor = nullptr;
     m_pObject->TryGetComponentOfBaseType(pActor);
     pActor->m_bAllowSleeping = false;
-    pActor->m_fWeightMass = 400.0f;
 
-    plJoltWaterBuoyancyComponent* pBuoyancy = nullptr;
-    plJoltWaterBuoyancyComponent::CreateComponent(m_pObject, pBuoyancy);
-    pBuoyancy->m_bUseShapeDerivedPontoons = false;
-    pBuoyancy->m_fBuoyancyFactor = 0.3f;
+    plJoltWaterBuoyancyComponent::CreateComponent(m_pObject, m_pBuoyancy);
+    m_pBuoyancy->m_bUseShapeDerivedPontoons = false;
+    m_pBuoyancy->m_fBuoyancyFactor = 0.0f;
 
     for (const plVec3& vPontoon : {plVec3(0.75f, 0.75f, -0.3f), plVec3(-0.75f, 0.75f, -0.3f), plVec3(0.75f, -0.75f, -0.3f), plVec3(-0.75f, -0.75f, -0.3f), plVec3(0, 0, 0)})
-      pBuoyancy->m_Pontoons.PushBack(vPontoon);
+      m_pBuoyancy->m_Pontoons.PushBack(vPontoon);
+  }
+
+  /// Sizes the lift to twice the weight when all five pontoons are fully submerged, so the boat settles half out of the water.
+  void ScaleLiftToMass()
+  {
+    m_World.Step(1);
+
+    PL_LOCK(m_World.GetWorld().GetWriteMarker());
+    plJoltDynamicActorComponent* pActor = nullptr;
+    m_pObject->TryGetComponentOfBaseType(pActor);
+
+    const float fPontoonVolume = (4.0f / 3.0f) * plMath::Pi<float>() * m_pBuoyancy->m_fPontoonRadius * m_pBuoyancy->m_fPontoonRadius * m_pBuoyancy->m_fPontoonRadius;
+    m_pBuoyancy->m_fBuoyancyFactor = 2.0f * pActor->GetMass() / (5.0f * 1000.0f * fPontoonVolume);
   }
 
   float Height() { return m_World.GetPosition(m_pObject->GetHandle()).z; }
 
   World m_World;
   plGameObject* m_pObject = nullptr;
+  plJoltWaterBuoyancyComponent* m_pBuoyancy = nullptr;
 };
 
 /// A box that is pushed up by the water settles near the surface instead of sinking or flying away.
 static void TestBoatFloats()
 {
   Boat boat(60.0f);
+  boat.ScaleLiftToMass();
   boat.m_World.StepSeconds(12.0f);
 
   const float fHeight = boat.Height();
@@ -103,6 +119,7 @@ static void TestBuoyancyIsFrameRateIndependent()
   for (plUInt32 i = 0; i < 3; ++i)
   {
     Boat boat(fRates[i]);
+    boat.ScaleLiftToMass();
     boat.m_World.StepSeconds(1.0f);
     fEarly[i] = boat.Height();
     boat.m_World.StepSeconds(11.0f);

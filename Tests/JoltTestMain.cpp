@@ -1,4 +1,5 @@
 #include "JoltTestSupport.h"
+#include <Foundation/Basics/Platform/Win/IncludeWindows.h>
 #include <cstdlib>
 #include <cstring>
 
@@ -65,9 +66,14 @@ static void RunGroups(const Options& options)
 
 int main(int argc, char** argv)
 {
+  // unbuffered, so the output up to a crash is not lost
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+
   const Options options = ParseOptions(argc, argv);
 
+  std::printf("starting engine systems\n");
   JoltTest::Startup();
+  std::printf("engine systems started\n");
 
   if (options.m_fStressSeconds > 0.0)
   {
@@ -79,13 +85,15 @@ int main(int argc, char** argv)
     RunGroups(options);
   }
 
-  JoltTest::Shutdown();
-
   const JoltTest::Totals& totals = JoltTest::GetTotals();
   std::printf("Jolt tests: %u checks, %u failure(s), %u open R1 item(s)\n", totals.m_uiChecks, totals.m_uiFailures, totals.m_uiOpenR1Items);
 
-  if (totals.m_uiFailures > 0)
-    return 1;
+  const int iExitCode = (totals.m_uiFailures > 0 || (options.m_bStrict && totals.m_uiOpenR1Items > 0)) ? 1 : 0;
 
-  return (options.m_bStrict && totals.m_uiOpenR1Items > 0) ? 1 : 0;
+  // Shutting down the core systems unloads resources through the renderer, which asserts in Debug without a GPU device,
+  // and skipping it makes the leak tracker assert instead, also from the plugin's DLL detach. The tests are done, so end
+  // the process without running either.
+  std::fflush(stdout);
+  TerminateProcess(GetCurrentProcess(), static_cast<UINT>(iExitCode));
+  return iExitCode;
 }

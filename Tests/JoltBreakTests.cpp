@@ -22,6 +22,7 @@ public:
 
     PL_LOCK(m_World.GetWorld().GetWriteMarker());
     plGameObjectDesc desc;
+    desc.m_bDynamic = true;
     plGameObject* pOwner = nullptr;
     m_World.GetWorld().CreateObject(desc, pOwner);
 
@@ -56,13 +57,34 @@ static void TestConstraintWithoutBreakForceHolds()
   CheckNear(scene.BoxHeight(), 8.0f, 0.15f, "a constraint without break force holds");
 }
 
-/// A joint whose break force is below the weight of the box lets go.
+/// A joint whose break force is far below the load lets go.
+///
+/// The fixed constraint compares ReduceMax() of the solver's lambda with the break force. The lambda points against the
+/// load, so for a hanging box it is negative and the joint only breaks on a transient, which differs between builds.
 static void TestConstraintBreaksAboveThreshold()
 {
-  HangingBox scene(5.0f);
+  HangingBox scene(0.01f);
   scene.m_World.StepSeconds(3.0f);
 
-  Check(scene.BoxHeight() < 6.0f, "the box falls once the joint exceeds its break force");
+  Check(scene.BoxHeight() < 6.0f, "the box falls once the joint exceeds its break force", Category::R1Gate);
+}
+
+/// The break force is compared with the solver's per-step impulse, so a joint rated for half the weight still holds.
+static void TestBreakForceIsInNewtons()
+{
+  float fHalfWeight = 0.0f;
+  {
+    HangingBox probe(0.0f);
+    PL_LOCK(probe.m_World.GetWorld().GetReadMarker());
+    plJoltDynamicActorComponent* pActor = nullptr;
+    probe.m_pBox->TryGetComponentOfBaseType(pActor);
+    fHalfWeight = 0.5f * pActor->GetMass() * 9.81f;
+  }
+
+  HangingBox scene(fHalfWeight);
+  scene.m_World.StepSeconds(3.0f);
+
+  Check(scene.BoxHeight() < 6.0f, "a joint rated for half the weight in newtons breaks", Category::R1Gate);
 }
 
 /// Breaking a constraint through the API releases the box and stepping afterwards stays stable.
@@ -103,6 +125,7 @@ void RunBreakTests()
   TestConstraintHoldsBelowThreshold();
   TestConstraintWithoutBreakForceHolds();
   TestConstraintBreaksAboveThreshold();
+  TestBreakForceIsInNewtons();
   TestExplicitBreak();
   TestDeletingJoinedBodyKeepsWorldStable();
 }

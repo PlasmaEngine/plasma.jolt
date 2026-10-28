@@ -105,6 +105,7 @@ private:
       PL_LOCK(m_World.GetWorld().GetWriteMarker());
 
       plGameObjectDesc desc;
+      desc.m_bDynamic = true;
       plGameObject* pJoint = nullptr;
       set.m_hJoint = m_World.GetWorld().CreateObject(desc, pJoint);
 
