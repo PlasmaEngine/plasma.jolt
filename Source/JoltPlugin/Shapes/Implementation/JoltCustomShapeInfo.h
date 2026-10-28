@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Jolt/Physics/Collision/Shape/DecoratedShape.h>
+#include <Core/Physics/SurfaceResource.h>
 
 class plJoltCustomShapeInfo : public JPH::DecoratedShape
 {
@@ -17,6 +18,7 @@ public:
 
   float m_fDensity = 1.0f;
   plHybridArray<JPH::RefConst<JPH::PhysicsMaterial>, 1> m_CustomMaterials;
+  plDynamicArray<plSurfaceResourceHandle> m_SurfaceOwners;
 
   virtual const JPH::PhysicsMaterial* GetMaterial(const JPH::SubShapeID& subShapeID) const override;
   virtual JPH::uint64 GetSubShapeUserData(const JPH::SubShapeID& subShapeID) const override;

@@ -153,7 +153,8 @@ void plJoltStaticActorComponent::CreateShapes(plDynamicArray<plJoltSubShape>& ou
 
     if (m_bPullSurfacesFromGraphicsMesh)
     {
-      materials.SetCount(pMesh->GetSurfaces().GetCount());
+      // keep the inherited surface for every slot the graphics mesh does not override
+      materials.SetCount(pMesh->GetSurfaces().GetCount(), pMaterial);
       PullSurfacesFromGraphicsMesh(materials);
     }
 
@@ -273,7 +274,7 @@ void plJoltStaticActorComponent::SetSurfaceFile(plStringView sFile)
 
 plStringView plJoltStaticActorComponent::GetSurfaceFile() const
 {
-  return m_hSurface.GetResourceID();
+  return m_hSurface.IsValid() ? plStringView(m_hSurface.GetResourceID()) : plStringView();
 }
 
 

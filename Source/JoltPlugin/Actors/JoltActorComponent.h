@@ -61,7 +61,7 @@ protected:
 
   void ExtractSubShapeGeometry(const plGameObject* pObject, plMsgExtractGeometry& msg) const;
 
-  static void GatherShapes(plDynamicArray<plJoltSubShape>& shapes, plGameObject* pObject, const plTransform& rootTransform, float fDensity, const plJoltMaterial* pMaterial);
+  void GatherShapes(plDynamicArray<plJoltSubShape>& shapes, plGameObject* pObject, const plTransform& rootTransform, float fDensity, const plJoltMaterial* pMaterial);
   plResult CreateShape(JPH::BodyCreationSettings* pSettings, float fDensity, const plJoltMaterial* pMaterial);
 
   virtual void CreateShapes(plDynamicArray<plJoltSubShape>& out_Shapes, const plTransform& rootTransform, float fDensity, const plJoltMaterial* pMaterial) {}
@@ -69,4 +69,5 @@ protected:
   plUInt32 m_uiUserDataIndex = plInvalidIndex;
   plUInt32 m_uiJoltBodyID = plInvalidIndex;
   plUInt32 m_uiObjectFilterID = plInvalidIndex;
+  plHybridArray<plUInt32, 4> m_ShapeUserData;
 };

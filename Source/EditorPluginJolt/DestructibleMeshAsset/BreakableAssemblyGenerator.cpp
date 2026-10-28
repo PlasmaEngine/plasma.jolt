@@ -87,7 +87,7 @@ namespace
       return {};
     }
 
-    plDocument* pDoc = plQtEditorApp::GetSingleton()->CreateDocument(sOutFile, plDocumentFlags::None);
+    plDocument* pDoc = plEditorApp::GetSingleton()->CreateDocument(sOutFile, plDocumentFlags::None);
     if (pDoc == nullptr)
     {
       plLog::Error("Could not create assembly part document '{}'", sOutFile);
@@ -121,7 +121,7 @@ namespace
 plStatus plBreakableAssemblyDocumentGenerator::Generate(plStringView sInputFileAbs, plStringView sMode, plDynamicArray<plDocument*>& out_generatedDocuments)
 {
   plStringBuilder sInputFileRel = sInputFileAbs;
-  plQtEditorApp::GetSingleton()->MakePathDataDirectoryRelative(sInputFileRel);
+  plEditorApp::GetSingleton()->MakePathDataDirectoryRelative(sInputFileRel);
 
   // ---- scan the file's node hierarchy for tagged parts
   plDynamicArray<AssemblyPart> parts;
@@ -225,7 +225,7 @@ plStatus plBreakableAssemblyDocumentGenerator::Generate(plStringView sInputFileA
     return plStatus(PL_SUCCESS);
   }
 
-  plDocument* pPrefabDoc = plQtEditorApp::GetSingleton()->CreateDocument(sOutFile, plDocumentFlags::None);
+  plDocument* pPrefabDoc = plEditorApp::GetSingleton()->CreateDocument(sOutFile, plDocumentFlags::None);
   if (pPrefabDoc == nullptr)
     return plStatus("Could not create the assembly prefab document.");
 

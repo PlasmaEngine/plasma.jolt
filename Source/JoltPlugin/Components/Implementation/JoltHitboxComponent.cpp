@@ -157,6 +157,19 @@ void plJoltHitboxComponent::CreatePhysicsShapes(const plSkeletonResourceHandle& 
     if (geo.m_Type == plSkeletonJointGeometryType::None)
       continue;
 
+    if (geo.m_Type != plSkeletonJointGeometryType::Sphere && geo.m_Type != plSkeletonJointGeometryType::Box &&
+        geo.m_Type != plSkeletonJointGeometryType::Capsule && geo.m_Type != plSkeletonJointGeometryType::CapsuleSideways)
+    {
+      plLog::Error("Hitbox skeleton '{}' contains unsupported collision geometry at index {}. Use sphere, box or capsule geometry for hitboxes.", pSkeleton->GetResourceIdOrDescription(), idx);
+      continue;
+    }
+
+    if (geo.m_uiAttachedToJoint >= desc.m_Skeleton.GetJointCount())
+    {
+      plLog::Error("Hitbox skeleton '{}' contains collision geometry attached to an invalid joint.", pSkeleton->GetResourceIdOrDescription());
+      continue;
+    }
+
     const plSkeletonJoint& joint = desc.m_Skeleton.GetJointByIndex(geo.m_uiAttachedToJoint);
 
     auto& shape = m_Shapes.ExpandAndGetRef();

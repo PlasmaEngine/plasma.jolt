@@ -149,7 +149,7 @@ void plJoltQueryShapeActorComponent::SetSurfaceFile(plStringView sFile)
 
 plStringView plJoltQueryShapeActorComponent::GetSurfaceFile() const
 {
-  return m_hSurface.GetResourceID();
+  return m_hSurface.IsValid() ? plStringView(m_hSurface.GetResourceID()) : plStringView();
 }
 
 const plJoltMaterial* plJoltQueryShapeActorComponent::GetJoltMaterial() const

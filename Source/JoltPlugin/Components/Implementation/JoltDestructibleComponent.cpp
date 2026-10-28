@@ -89,9 +89,13 @@ void plJoltDestructibleComponentManager::PostAsyncUpdate(const plWorldModule::Up
   {
     componentsToUpdate.Insert(pComponent);
   }
-  for (plJoltDestructibleComponent* pComponent : pModule->GetDestructiblesPutToSleep())
+  plHybridArray<plComponentHandle, 16> sleepingDestructibles;
+  sleepingDestructibles = pModule->GetDestructiblesPutToSleep();
+  for (const auto& hComponent : sleepingDestructibles)
   {
-    componentsToUpdate.Insert(pComponent);
+    plJoltDestructibleComponent* pComponent = nullptr;
+    if (TryGetComponent(hComponent, pComponent) && pComponent->IsActiveAndSimulating())
+      componentsToUpdate.Insert(pComponent);
   }
   for (plJoltDestructibleComponent* pComponent : m_FadingDestructibles)
   {
@@ -2040,7 +2044,7 @@ void plJoltDestructibleComponent::OnMsgExtractRenderData(plMsgExtractRenderData&
       if (!hMaterial.IsValid())
       {
         // meshes with an invalid material are skipped by the renderer entirely
-        hMaterial = plResourceManager::LoadResource<plMaterialResource>(plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::Lit));
+        hMaterial = plResourceManager::LoadResource<plMaterialResource>(plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::OpenPBR));
       }
 
       plMeshRenderData* pRenderData = msg.m_pRenderDataManager->CreateRenderDataForThisFrame<plMeshRenderData>(GetOwner());

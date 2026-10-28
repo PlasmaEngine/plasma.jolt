@@ -146,8 +146,9 @@ void plJoltVisColMeshComponent::Initialize()
 
 void plJoltVisColMeshComponent::OnDeactivated()
 {
-  plRenderDataManager* pRenderDataManager = GetWorld()->GetModule<plRenderDataManager>();
-  pRenderDataManager->DeleteInstanceData(m_InstanceDataOffset);
+  SUPER::OnDeactivated();
+  if (plRenderDataManager* pRenderDataManager = GetWorld()->GetModule<plRenderDataManager>())
+    pRenderDataManager->DeleteInstanceData(m_InstanceDataOffset);
 }
 
 void plJoltVisColMeshComponent::OnMsgExtractRenderData(plMsgExtractRenderData& msg) const
@@ -190,8 +191,6 @@ void plJoltVisColMeshComponentManager::Initialize()
 
 void plJoltVisColMeshComponentManager::Deinitialize()
 {
-  PL_LOCK(m_Mutex);
-
   plResourceManager::GetResourceEvents().RemoveEventHandler(plMakeDelegate(&plJoltVisColMeshComponentManager::ResourceEventHandler, this));
 
   SUPER::Deinitialize();
@@ -200,7 +199,20 @@ void plJoltVisColMeshComponentManager::Deinitialize()
 void plJoltVisColMeshComponentManager::Update(const plWorldModule::UpdateContext& context)
 {
   plDeque<plComponentHandle> requireUpdate;
-  m_RequireUpdate.Swap(requireUpdate);
+  plDeque<plJoltMeshResourceHandle> changedMeshes;
+  {
+    PL_LOCK(m_Mutex);
+    m_RequireUpdate.Swap(requireUpdate);
+    m_ChangedMeshes.Swap(changedMeshes);
+  }
+
+  // Resource notifications can arrive on loader threads. Resolve components only
+  // here, while world component storage is stable.
+  for (auto it = GetComponents(); it.IsValid(); it.Next())
+  {
+    if (changedMeshes.Contains(it->GetMesh()))
+      requireUpdate.PushBack(it->GetHandle());
+  }
 
   for (const auto& hComp : requireUpdate)
   {
@@ -214,6 +226,7 @@ void plJoltVisColMeshComponentManager::Update(const plWorldModule::UpdateContext
 
 void plJoltVisColMeshComponentManager::EnqueueUpdate(plComponentHandle hComponent)
 {
+  PL_LOCK(m_Mutex);
   m_RequireUpdate.PushBack(hComponent);
 }
 
@@ -223,17 +236,7 @@ void plJoltVisColMeshComponentManager::ResourceEventHandler(const plResourceEven
   {
     PL_LOCK(m_Mutex);
 
-    plJoltMeshResourceHandle hResource((plJoltMeshResource*)(e.m_pResource));
-
-    for (auto it = m_Components.GetIterator(); it.IsValid(); ++it)
-    {
-      const plJoltVisColMeshComponent* pComponent = static_cast<plJoltVisColMeshComponent*>(it.Value());
-
-      if (pComponent->GetMesh() == hResource)
-      {
-        m_RequireUpdate.PushBack(pComponent->GetHandle());
-      }
-    }
+    m_ChangedMeshes.PushBack(plJoltMeshResourceHandle(static_cast<plJoltMeshResource*>(e.m_pResource)));
   }
 }
 

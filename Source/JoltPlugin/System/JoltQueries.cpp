@@ -108,13 +108,11 @@ bool plJoltWorldModule::Raycast(plPhysicsCastResult& out_result, const plVec3& v
 class plRayCastCollectorAll : public JPH::CastRayCollector
 {
 public:
-  plArrayPtr<JPH::RayCastResult> m_Results;
-  plUInt32 m_uiFound = 0;
+  plHybridArray<JPH::RayCastResult, 256> m_Results;
 
   virtual void AddHit(const JPH::RayCastResult& result) override
   {
-    m_Results[m_uiFound] = result;
-    ++m_uiFound;
+    m_Results.PushBack(result);
   }
 };
 
@@ -130,7 +128,6 @@ bool plJoltWorldModule::RaycastAll(plPhysicsCastResultArray& out_results, const 
   ray.mDirection = plJoltConversionUtils::ToVec3(vDir * fDistance);
 
   plRayCastCollectorAll collector;
-  collector.m_Results = PL_NEW_ARRAY(plFrameAllocator::GetCurrentAllocator(), JPH::RayCastResult, 256);
 
   plJoltBroadPhaseLayerFilter broadphaseFilter(params.m_ShapeTypes);
   plJoltBodyFilter bodyFilter(params.m_uiIgnoreObjectFilterID);
@@ -143,12 +140,12 @@ bool plJoltWorldModule::RaycastAll(plPhysicsCastResultArray& out_results, const 
 
   query.CastRay(ray, opt, collector, broadphaseFilter, objectFilter, bodyFilter);
 
-  if (collector.m_uiFound == 0)
+  if (collector.m_Results.IsEmpty())
     return false;
 
-  out_results.m_Results.SetCount(collector.m_uiFound);
+  out_results.m_Results.SetCount(collector.m_Results.GetCount());
 
-  for (plUInt32 i = 0; i < collector.m_uiFound; ++i)
+  for (plUInt32 i = 0; i < collector.m_Results.GetCount(); ++i)
   {
     out_results.m_Results[i].m_fDistance = collector.m_Results[i].mFraction * fDistance;
     out_results.m_Results[i].m_vPosition = vStart + fDistance * collector.m_Results[i].mFraction * vDir;

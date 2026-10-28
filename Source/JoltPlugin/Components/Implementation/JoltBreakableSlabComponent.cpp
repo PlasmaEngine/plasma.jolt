@@ -119,9 +119,13 @@ void plJoltBreakableSlabComponentManager::PostAsyncUpdate(const plWorldModule::U
     pComponent->RetrieveShardTransforms();
   }
 
-  for (plJoltBreakableSlabComponent* pComponent : pModule->GetSlabsPutToSleep())
+  plHybridArray<plComponentHandle, 16> sleepingSlabs;
+  sleepingSlabs = pModule->GetSlabsPutToSleep();
+  for (const auto& hComponent : sleepingSlabs)
   {
-    pComponent->RetrieveShardTransforms();
+    plJoltBreakableSlabComponent* pComponent = nullptr;
+    if (TryGetComponent(hComponent, pComponent) && pComponent->IsActiveAndSimulating())
+      pComponent->RetrieveShardTransforms();
   }
 
   for (auto hComponent : m_RequireBreakage)
@@ -133,7 +137,14 @@ void plJoltBreakableSlabComponentManager::PostAsyncUpdate(const plWorldModule::U
       {
         pComponent->m_pShatterTask = PL_DEFAULT_NEW(plShatterTask);
         pComponent->m_pShatterTask->ConfigureTask("ShatterGlass", plTaskNesting::Never);
-        pComponent->m_pShatterTask->m_pComponent = pComponent;
+        pComponent->m_pShatterTask->m_Breakable = pComponent->m_Breakable;
+        pComponent->m_pShatterTask->m_GlobalInverse = pComponent->GetOwner()->GetGlobalTransform().GetInverse();
+        pComponent->m_pShatterTask->m_Random.Initialize(GetWorld()->GetRandomNumberGenerator().UInt());
+        pComponent->m_pShatterTask->m_uiFirstShard = pComponent->m_ShardBodyIDs.GetCount();
+        pComponent->m_pShatterTask->m_fWidth = pComponent->m_fWidth;
+        pComponent->m_pShatterTask->m_fHeight = pComponent->m_fHeight;
+        pComponent->m_pShatterTask->m_fThickness = pComponent->m_fThickness;
+        pComponent->m_pShatterTask->m_vUvScale = pComponent->m_vUvScale;
         pComponent->m_pShatterTask->m_ShatterPoints = pComponent->m_ShatterPoints;
 
         plTaskSystem::StartSingleTask(pComponent->m_pShatterTask, plTaskPriority::In3Frames); // allow some delay, this can take longer than a single frame
@@ -149,23 +160,28 @@ void plJoltBreakableSlabComponentManager::PostAsyncUpdate(const plWorldModule::U
 
   m_RequireBreakage.Clear();
 
-  for (auto hComponent : m_RequireBreakUpdate)
+  for (auto it = m_RequireBreakUpdate.GetIterator(); it.IsValid();)
   {
+    const auto hComponent = *it;
     plJoltBreakableSlabComponent* pComponent;
     if (TryGetComponent(hComponent, pComponent) && pComponent->IsActiveAndSimulating() && pComponent->m_pShatterTask != nullptr)
     {
       if (pComponent->m_pShatterTask->IsTaskFinished())
       {
+        // The component handle was resolved above and Cleanup detaches cancelled work.
+        // Publish the complete geometry only after the task has finished.
+        pComponent->m_Breakable = pComponent->m_pShatterTask->m_Breakable;
         pComponent->ApplyBreak(pComponent->m_pShatterTask->m_Shapes, pComponent->m_pShatterTask->m_hShardsMesh, pComponent->m_pShatterTask->m_vFinalImpulse);
         pComponent->m_pShatterTask = nullptr;
 
         m_RequireBreakUpdate.Remove(hComponent);
         break; // sufficient to update one slab per frame
       }
+      ++it;
     }
     else
     {
-      m_RequireBreakUpdate.Remove(hComponent);
+      it = m_RequireBreakUpdate.Remove(it);
     }
   }
 
@@ -576,10 +592,11 @@ void plJoltBreakableSlabComponent::ShatterAll(float fShardSize, const plVec3& vI
   pt.m_uiShardIdx = plInvalidIndex;
 }
 
-void plJoltBreakableSlabComponent::PrepareBreakAsync(plDynamicArray<JPH::Ref<JPH::ConvexShape>>& out_Shapes, plArrayPtr<const plShatterPoint> points)
+void plShatterTask::PrepareBreak()
 {
   PL_PROFILE_SCOPE("PrepareBreakAsync");
 
+  const auto points = m_ShatterPoints.GetArrayPtr();
 
   for (plUInt32 i = 0; i < points.GetCount(); ++i)
   {
@@ -588,18 +605,18 @@ void plJoltBreakableSlabComponent::PrepareBreakAsync(plDynamicArray<JPH::Ref<JPH
     if (point.m_vGlobalPosition == plVec3(1024, 1024, 1024))
     {
       // shatter all pieces
-      m_Breakable.ShatterAll(point.m_fCellSize, GetWorld()->GetRandomNumberGenerator(), true);
+      m_Breakable.ShatterAll(point.m_fCellSize, m_Random, true);
       break;
     }
     else
     {
 
-      if (point.m_uiShardIdx != plInvalidIndex && !m_Breakable.m_Shards[point.m_uiShardIdx].m_bShattered)
+      if (point.m_uiShardIdx < m_Breakable.m_Shards.GetCount() && !m_Breakable.m_Shards[point.m_uiShardIdx].m_bShattered)
       {
         const plUInt32 uiShardIdxOffset = m_Breakable.m_Shards.GetCount();
-        const plVec2 vLocalPos = (GetOwner()->GetGlobalTransform().GetInverse() * point.m_vGlobalPosition).GetAsVec2();
+        const plVec2 vLocalPos = (m_GlobalInverse * point.m_vGlobalPosition).GetAsVec2();
 
-        m_Breakable.ShatterShard(point.m_uiShardIdx, vLocalPos, GetWorld()->GetRandomNumberGenerator(), plMath::Clamp(point.m_fImpactRadius, 0.05f, 0.4f), plMath::Clamp(point.m_fCellSize, 0.3f, 0.5f), point.m_uiAllowedBreakPatterns);
+        m_Breakable.ShatterShard(point.m_uiShardIdx, vLocalPos, m_Random, plMath::Clamp(point.m_fImpactRadius, 0.05f, 0.4f), plMath::Clamp(point.m_fCellSize, 0.3f, 0.5f), point.m_uiAllowedBreakPatterns);
 
         const float fDistSqr = plMath::Square(point.m_fMakeDynamicRadius);
 
@@ -623,7 +640,7 @@ void plJoltBreakableSlabComponent::PrepareBreakAsync(plDynamicArray<JPH::Ref<JPH
 
   m_Breakable.RecalculateDymamic();
 
-  PrepareShardColliders(m_ShardBodyIDs.GetCount(), out_Shapes);
+  plJoltBreakableSlabComponent::PrepareShardColliders(m_Breakable, m_fThickness, m_uiFirstShard, m_Shapes);
 }
 
 void plJoltBreakableSlabComponent::ApplyBreak(plArrayPtr<JPH::Ref<JPH::ConvexShape>> shapes, const plMeshResourceHandle& hMesh, const plVec3& vImpulse)
@@ -742,7 +759,7 @@ void plJoltBreakableSlabComponent::ReinitMeshes()
   m_Bounds = plBoundingBox::MakeFromMinMax(plVec3::MakeZero(), plVec3(m_fWidth, m_fHeight, m_fThickness));
 }
 
-void plJoltBreakableSlabComponent::BuildMeshResourceFromGeometry(plGeometry& Geometry, plMeshResourceDescriptor& MeshDesc, bool bWithSkinningData) const
+void plJoltBreakableSlabComponent::BuildMeshResourceFromGeometry(plGeometry& Geometry, plMeshResourceDescriptor& MeshDesc, bool bWithSkinningData)
 {
   auto& MeshBufferDesc = MeshDesc.MeshBufferDesc();
 
@@ -827,10 +844,15 @@ void AddSkirtPolygons(const plVec2& vPoint0, const plVec2& vPoint1, float fThick
 
 plMeshResourceHandle plJoltBreakableSlabComponent::CreateShardsMesh() const
 {
+  return CreateShardsMesh(m_Breakable, m_fWidth, m_fHeight, m_fThickness, m_vUvScale);
+}
+
+plMeshResourceHandle plJoltBreakableSlabComponent::CreateShardsMesh(const plBreakable2D& breakable, float fWidth, float fHeight, float fThickness, const plVec2& vUvScale)
+{
   PL_PROFILE_SCOPE("CreateShardsMesh");
 
   plStringBuilder meshName;
-  meshName.SetFormat("JoltSlab-{}-{}", plArgP(this), s_iShardMeshCounter.Increment());
+  meshName.SetFormat("JoltSlab-{}", s_iShardMeshCounter.Increment());
 
   plGeometry geo;
   plHybridArray<plUInt32, 16> vtxIdx1;
@@ -838,11 +860,11 @@ plMeshResourceHandle plJoltBreakableSlabComponent::CreateShardsMesh() const
 
   const plVec3 vNormal(0, 0, 1);
 
-  const plVec3 vOffset = vNormal * m_fThickness;
+  const plVec3 vOffset = vNormal * fThickness;
 
-  for (plUInt32 uiShardIdx = 0; uiShardIdx < m_Breakable.m_Shards.GetCount(); ++uiShardIdx)
+  for (plUInt32 uiShardIdx = 0; uiShardIdx < breakable.m_Shards.GetCount(); ++uiShardIdx)
   {
-    const auto& shard = m_Breakable.m_Shards[uiShardIdx];
+    const auto& shard = breakable.m_Shards[uiShardIdx];
     vtxIdx1.Clear();
     vtxIdx2.Clear();
 
@@ -854,9 +876,9 @@ plMeshResourceHandle plJoltBreakableSlabComponent::CreateShardsMesh() const
       plVec3 v = shard.m_Edges[i].m_vStartPosition.GetAsVec3(0);
 
       plVec2 vTexCoord;
-      vTexCoord.x = v.x / m_fWidth;
-      vTexCoord.y = 1.0f - (v.y / m_fHeight);
-      vTexCoord = vTexCoord.CompMul(m_vUvScale);
+      vTexCoord.x = v.x / fWidth;
+      vTexCoord.y = 1.0f - (v.y / fHeight);
+      vTexCoord = vTexCoord.CompMul(vUvScale);
 
       v -= shard.m_vCenterPosition.GetAsVec3(0);
 
@@ -870,7 +892,7 @@ plMeshResourceHandle plJoltBreakableSlabComponent::CreateShardsMesh() const
     plUInt32 uiPrev = shard.m_Edges.GetCount() - 1;
     for (plUInt32 i = 0; i < shard.m_Edges.GetCount(); ++i)
     {
-      AddSkirtPolygons(shard.m_Edges[uiPrev].m_vStartPosition - shard.m_vCenterPosition, shard.m_Edges[i].m_vStartPosition - shard.m_vCenterPosition, m_fThickness, geo, opt);
+      AddSkirtPolygons(shard.m_Edges[uiPrev].m_vStartPosition - shard.m_vCenterPosition, shard.m_Edges[i].m_vStartPosition - shard.m_vCenterPosition, fThickness, geo, opt);
       uiPrev = i;
     }
   }
@@ -886,17 +908,22 @@ plMeshResourceHandle plJoltBreakableSlabComponent::CreateShardsMesh() const
 
 void plJoltBreakableSlabComponent::PrepareShardColliders(plUInt32 uiFirstShard, plDynamicArray<JPH::Ref<JPH::ConvexShape>>& out_Shapes) const
 {
+  PrepareShardColliders(m_Breakable, m_fThickness, uiFirstShard, out_Shapes);
+}
+
+void plJoltBreakableSlabComponent::PrepareShardColliders(const plBreakable2D& breakable, float fThickness, plUInt32 uiFirstShard, plDynamicArray<JPH::Ref<JPH::ConvexShape>>& out_Shapes)
+{
   PL_PROFILE_SCOPE("PrepareShardColliders");
 
-  out_Shapes.SetCount(m_Breakable.m_Shards.GetCount() - uiFirstShard);
+  out_Shapes.SetCount(breakable.m_Shards.GetCount() - uiFirstShard);
 
-  const float fShardThickness = plMath::Max(m_fThickness, JPH::cDefaultConvexRadius * 2.0f);
-  const float fThick1 = -(fShardThickness - m_fThickness) * 0.5f;
+  const float fShardThickness = plMath::Max(fThickness, JPH::cDefaultConvexRadius * 2.0f);
+  const float fThick1 = -(fShardThickness - fThickness) * 0.5f;
   const float fThick2 = fShardThickness + fThick1;
 
   for (plUInt32 uiShardIdx = 0; uiShardIdx < out_Shapes.GetCount(); ++uiShardIdx)
   {
-    const auto& shard = m_Breakable.m_Shards[uiFirstShard + uiShardIdx];
+    const auto& shard = breakable.m_Shards[uiFirstShard + uiShardIdx];
 
     if (shard.m_bShattered)
       continue;
@@ -1461,8 +1488,8 @@ void plShatterTask::Execute()
     m_vFinalImpulse /= (float)m_ShatterPoints.GetCount();
   }
 
-  m_pComponent->PrepareBreakAsync(m_Shapes, m_ShatterPoints);
-  m_hShardsMesh = m_pComponent->CreateShardsMesh();
+  PrepareBreak();
+  m_hShardsMesh = plJoltBreakableSlabComponent::CreateShardsMesh(m_Breakable, m_fWidth, m_fHeight, m_fThickness, m_vUvScale);
 }
 
 

@@ -15,6 +15,7 @@
 #include <JoltPlugin/Actors/JoltStaticActorComponent.h>
 #include <JoltPlugin/Actors/JoltTriggerComponent.h>
 #include <JoltPlugin/Character/JoltCharacterControllerComponent.h>
+#include <JoltPlugin/Components/JoltBreakableSlabComponent.h>
 #include <JoltPlugin/Components/JoltDestructibleComponent.h>
 #include <JoltPlugin/Components/JoltRagdollComponent.h>
 #include <JoltPlugin/Components/JoltSettingsComponent.h>
@@ -26,6 +27,7 @@
 #include <JoltPlugin/System/JoltContacts.h>
 #include <JoltPlugin/System/JoltCore.h>
 #include <JoltPlugin/System/JoltDebugRenderer.h>
+#include <JoltPlugin/System/JoltTempAlloc.h>
 #include <JoltPlugin/System/JoltWorldModule.h>
 #include <JoltPlugin/Utilities/JoltConversionUtils.h>
 #include <JoltPlugin/Utilities/JoltUserData.h>
@@ -130,7 +132,7 @@ public:
         if (--(*m_pActiveRagdolls)[pActor] == 0)
         {
           m_pActiveRagdolls->Remove(pActor);
-          m_pRagdollsPutToSleep->PushBack(pActor);
+          m_pRagdollsPutToSleep->PushBack(pActor->GetHandle());
         }
 
         return;
@@ -153,7 +155,7 @@ public:
         if (--(*m_pActiveSlabs)[pActor] == 0)
         {
           m_pActiveSlabs->Remove(pActor);
-          m_pSlabsPutToSleep->PushBack(pActor);
+          m_pSlabsPutToSleep->PushBack(pActor->GetHandle());
         }
 
         return;
@@ -165,7 +167,7 @@ public:
         if (--(*m_pActiveDestructibles)[pActor] == 0)
         {
           m_pActiveDestructibles->Remove(pActor);
-          m_pDestructiblesPutToSleep->PushBack(pActor);
+          m_pDestructiblesPutToSleep->PushBack(pActor->GetHandle());
         }
 
         return;
@@ -180,11 +182,11 @@ public:
   plSet<plJoltDynamicActorComponent*>* m_pActiveActors = nullptr;
   plMap<plJoltRopeComponent*, plInt32>* m_pActiveRopes = nullptr;          // value is a ref-count
   plMap<plJoltRagdollComponent*, plInt32>* m_pActiveRagdolls = nullptr;    // value is a ref-count
-  plDynamicArray<plJoltRagdollComponent*>* m_pRagdollsPutToSleep = nullptr;
+  plDynamicArray<plComponentHandle>* m_pRagdollsPutToSleep = nullptr;
   plMap<plJoltBreakableSlabComponent*, plInt32>* m_pActiveSlabs = nullptr; // value is a ref-count
-  plDynamicArray<plJoltBreakableSlabComponent*>* m_pSlabsPutToSleep = nullptr;
+  plDynamicArray<plComponentHandle>* m_pSlabsPutToSleep = nullptr;
   plMap<plJoltDestructibleComponent*, plInt32>* m_pActiveDestructibles = nullptr; // value is a ref-count
-  plDynamicArray<plJoltDestructibleComponent*>* m_pDestructiblesPutToSleep = nullptr;
+  plDynamicArray<plComponentHandle>* m_pDestructiblesPutToSleep = nullptr;
 };
 
 class plJoltGroupFilter : public JPH::GroupFilter
@@ -235,99 +237,6 @@ void plJoltWorldModule::Deinitialize()
   m_pGroupFilterIgnoreSame = nullptr;
 }
 
-class plJoltTempAlloc : public JPH::TempAllocator
-{
-public:
-  plJoltTempAlloc(const char* szName)
-    : m_ProxyAlloc(szName, plFoundation::GetAlignedAllocator())
-  {
-    AddChunk(0);
-    m_uiCurChunkIdx = 0;
-  }
-
-  ~plJoltTempAlloc()
-  {
-    for (plUInt32 i = 0; i < m_Chunks.GetCount(); ++i)
-    {
-      ClearChunk(i);
-    }
-  }
-
-  virtual void* Allocate(JPH::uint inSize) override
-  {
-    if (inSize == 0)
-      return nullptr;
-
-    const plUInt32 uiNeeded = plMemoryUtils::AlignSize(inSize, 16u);
-
-    while (true)
-    {
-      const plUInt32 uiRemaining = m_Chunks[m_uiCurChunkIdx].m_uiSize - m_Chunks[m_uiCurChunkIdx].m_uiLastOffset;
-
-      if (uiRemaining >= uiNeeded)
-        break;
-
-      AddChunk(uiNeeded);
-    }
-
-    auto& lastAlloc = m_Chunks[m_uiCurChunkIdx];
-
-    void* pRes = plMemoryUtils::AddByteOffset(lastAlloc.m_pPtr, lastAlloc.m_uiLastOffset);
-    lastAlloc.m_uiLastOffset += uiNeeded;
-    return pRes;
-  }
-
-  virtual void Free(void* pInAddress, JPH::uint inSize) override
-  {
-    if (pInAddress == nullptr)
-      return;
-
-    const plUInt32 uiAllocSize = plMemoryUtils::AlignSize(inSize, 16u);
-
-    auto& lastAlloc = m_Chunks[m_uiCurChunkIdx];
-    lastAlloc.m_uiLastOffset -= uiAllocSize;
-
-    if (lastAlloc.m_uiLastOffset == 0 && m_uiCurChunkIdx > 0)
-    {
-      // move back to the previous chunk
-      --m_uiCurChunkIdx;
-    }
-  }
-
-  struct Chunk
-  {
-    void* m_pPtr = nullptr;
-    plUInt32 m_uiSize = 0;
-    plUInt32 m_uiLastOffset = 0;
-  };
-
-  void AddChunk(plUInt32 uiSize)
-  {
-    ++m_uiCurChunkIdx;
-
-    if (m_uiCurChunkIdx < m_Chunks.GetCount())
-      return;
-
-    uiSize = plMath::Max(uiSize, 1024u * 1024u);
-
-    auto& alloc = m_Chunks.ExpandAndGetRef();
-    alloc.m_pPtr = PL_NEW_RAW_BUFFER(&m_ProxyAlloc, plUInt8, uiSize);
-    alloc.m_uiSize = uiSize;
-  }
-
-  void ClearChunk(plUInt32 uiChunkIdx)
-  {
-    PL_DELETE_RAW_BUFFER(&m_ProxyAlloc, m_Chunks[uiChunkIdx].m_pPtr);
-    m_Chunks[uiChunkIdx].m_pPtr = nullptr;
-    m_Chunks[uiChunkIdx].m_uiSize = 0;
-    m_Chunks[uiChunkIdx].m_uiLastOffset = 0;
-  }
-
-  plUInt32 m_uiCurChunkIdx = 0;
-  plHybridArray<Chunk, 16> m_Chunks;
-  plProxyAllocator m_ProxyAlloc;
-};
-
 
 void plJoltWorldModule::Initialize()
 {
@@ -337,6 +246,7 @@ void plJoltWorldModule::Initialize()
 
   // ensure the first element is reserved for 'invalid' objects
   m_AllocatedUserData.SetCount(1);
+  m_UserDataRefCounts.SetCount(1, 0);
 
   UpdateSettingsCfg();
 
@@ -450,11 +360,13 @@ plUInt32 plJoltWorldModule::AllocateUserData(plJoltUserData*& out_pUserData)
     plUInt32 uiIndex = m_FreeUserData.PeekBack();
     m_FreeUserData.PopBack();
 
+    m_UserDataRefCounts[uiIndex] = 1;
     out_pUserData = &m_AllocatedUserData[uiIndex];
     return uiIndex;
   }
 
   out_pUserData = &m_AllocatedUserData.ExpandAndGetRef();
+  m_UserDataRefCounts.PushBack(1);
   return m_AllocatedUserData.GetCount() - 1;
 }
 
@@ -465,9 +377,22 @@ void plJoltWorldModule::DeallocateUserData(plUInt32& ref_uiUserDataId)
 
   m_AllocatedUserData[ref_uiUserDataId].Invalidate();
 
-  m_FreeUserDataAfterSimulationStep.PushBack(ref_uiUserDataId);
+  ReleaseUserData(ref_uiUserDataId);
 
   ref_uiUserDataId = plInvalidIndex;
+}
+
+void plJoltWorldModule::RetainUserData(plUInt32 uiUserDataId)
+{
+  PL_ASSERT_DEV(m_UserDataRefCounts[uiUserDataId] > 0, "Cannot retain retired physics user data.");
+  ++m_UserDataRefCounts[uiUserDataId];
+}
+
+void plJoltWorldModule::ReleaseUserData(plUInt32 uiUserDataId)
+{
+  PL_ASSERT_DEV(m_UserDataRefCounts[uiUserDataId] > 0, "Physics user data reference underflow.");
+  if (--m_UserDataRefCounts[uiUserDataId] == 0)
+    m_FreeUserDataAfterSimulationStep.PushBack(uiUserDataId);
 }
 
 const plJoltUserData& plJoltWorldModule::GetUserData(plUInt32 uiUserDataId) const
@@ -688,10 +613,16 @@ void plJoltWorldModule::CheckBreakableConstraints()
 {
   plWorld* pWorld = GetWorld();
 
-  for (auto it = m_BreakableConstraints.GetIterator(); it.IsValid();)
+  // Notifications can delete this or another constraint. Never retain a set iterator
+  // or component pointer across gameplay callbacks.
+  plHybridArray<plComponentHandle, 32> constraints;
+  for (const auto& hConstraint : m_BreakableConstraints)
+    constraints.PushBack(hConstraint);
+
+  for (const auto& hConstraint : constraints)
   {
     plJoltConstraintComponent* pConstraint;
-    if (pWorld->TryGetComponent(*it, pConstraint) && pConstraint->IsActive())
+    if (pWorld->TryGetComponent(hConstraint, pConstraint) && pConstraint->IsActive() && pConstraint->m_pConstraint != nullptr)
     {
       if (pConstraint->ExceededBreakingPoint())
       {
@@ -701,17 +632,14 @@ void plJoltWorldModule::CheckBreakableConstraints()
         pConstraint->GetOwner()->SendEventMessage(msg, pConstraint);
 
         // currently we don't track the broken state separately, we just remove the component
-        pConstraint->DeleteComponent();
-        it = m_BreakableConstraints.Remove(it);
-      }
-      else
-      {
-        ++it;
+        if (pWorld->TryGetComponent(hConstraint, pConstraint))
+          pConstraint->DeleteComponent();
+        m_BreakableConstraints.Remove(hConstraint);
       }
     }
     else
     {
-      it = m_BreakableConstraints.Remove(it);
+      m_BreakableConstraints.Remove(hConstraint);
     }
   }
 }
@@ -767,6 +695,11 @@ void plJoltWorldModule::ValidateBodies(const char* szWhen)
 
 void plJoltWorldModule::StartSimulation(const plWorldModule::UpdateContext& context)
 {
+  m_RagdollsPutToSleep.Clear();
+  m_SlabsPutToSleep.Clear();
+  m_DestructiblesPutToSleep.Clear();
+  m_UpdateSteps.Clear();
+
   if (cvar_JoltSimulationPause)
     return;
 
@@ -933,6 +866,8 @@ void plJoltWorldModule::FetchResults(const plWorldModule::UpdateContext& context
   reinterpret_cast<plJoltContactListener*>(m_pContactListener)->m_ContactEvents.UpdatePhysicsSlideReactions();
   reinterpret_cast<plJoltContactListener*>(m_pContactListener)->m_ContactEvents.UpdatePhysicsRollReactions();
 
+  reinterpret_cast<plJoltContactListener*>(m_pContactListener)->SendContactMessages();
+
   CheckBreakableConstraints();
 
   FreeUserDataAfterSimulationStep();
@@ -1022,10 +957,6 @@ void plJoltWorldModule::Simulate()
   plTime tDelta = m_UpdateSteps[0];
   plUInt32 uiSteps = 1;
 
-  m_RagdollsPutToSleep.Clear();
-  m_SlabsPutToSleep.Clear();
-  m_DestructiblesPutToSleep.Clear();
-
   for (plUInt32 i = 1; i < m_UpdateSteps.GetCount(); ++i)
   {
     PL_PROFILE_SCOPE("Physics Sim Step");
@@ -1086,7 +1017,7 @@ void plJoltWorldModule::UpdateConstraints()
   plJoltConstraintComponent* pComponent;
   for (auto& hComponent : m_RequireUpdate)
   {
-    if (this->m_pWorld->TryGetComponent(hComponent, pComponent))
+    if (this->m_pWorld->TryGetComponent(hComponent, pComponent) && pComponent->IsActiveAndSimulating() && pComponent->m_pConstraint != nullptr)
     {
       pComponent->ApplySettings();
     }
@@ -1404,13 +1335,13 @@ void plJoltWorldModule::AddImpulse(plUInt32 uiBodyID, const plVec3& vImpulse, co
 
 void plJoltWorldModule::ApplyImpulses()
 {
+  PL_LOCK(m_ImpulsesMutex);
+
   if (m_Impulses.IsEmpty())
     return;
 
   auto* pBodies = &m_pSystem->GetBodyInterface();
   plHybridArray<plJoltImpulse, 64> retain;
-
-  PL_LOCK(m_ImpulsesMutex);
 
   for (plUInt32 i = 0; i < m_Impulses.GetCount(); ++i)
   {
@@ -1423,7 +1354,10 @@ void plJoltWorldModule::ApplyImpulses()
 
     if (!pBodies->IsAdded(bodyId))
     {
-      retain.PushBack(imp);
+      // A full index + sequence must still be queued for addition. Deleted bodies
+      // and failed creations must not leave undeliverable impulses behind forever.
+      if (m_BodiesToAdd.Contains(imp.m_uiBodyID) || m_BodiesToAddAndActivate.Contains(imp.m_uiBodyID))
+        retain.PushBack(imp);
       continue;
     }
 
@@ -1546,8 +1480,11 @@ plResult plJoltWorldModule::BuildJoltHeightfieldShape(const plPhysicsWorldModule
   return PL_SUCCESS;
 }
 
-void plJoltWorldModule::AttachHeightfieldBody(plJoltWorldModule* pModule, plGameObject* pOwner, HeightfieldCacheEntry& cacheEntry, plUInt8 uiCollisionLayer, plStringView sCacheIdentifier)
+plResult plJoltWorldModule::AttachHeightfieldBody(plJoltWorldModule* pModule, plGameObject* pOwner, plSharedPtr<HeightfieldCacheEntry> pEntry, plUInt8 uiCollisionLayer, plStringView sCacheIdentifier)
 {
+  // Retain replacement ownership before deleting the old component, including when
+  // reattaching the same entry or replacing a named cache entry with a rebake.
+  const auto& cacheEntry = *pEntry;
   PL_ASSERT_DEV(cacheEntry.m_pShape != nullptr, "Invalid shape");
 
   // Remove any existing heightfield collider (its OnDeactivated decrements the old cache entry ref count).
@@ -1565,10 +1502,8 @@ void plJoltWorldModule::AttachHeightfieldBody(plJoltWorldModule* pModule, plGame
   if (rtsResult.HasError())
   {
     plLog::Error("AttachHeightfieldBody: failed to wrap shape: {}", rtsResult.GetError().c_str());
-    return;
+    return PL_FAILURE;
   }
-
-  ++cacheEntry.m_uiRefCount;
 
   plJoltHeightfieldColliderComponent* pComp = nullptr;
   plJoltHeightfieldColliderComponent::CreateComponent(pOwner, pComp);
@@ -1579,6 +1514,7 @@ void plJoltWorldModule::AttachHeightfieldBody(plJoltWorldModule* pModule, plGame
 
   pComp->m_uiObjectFilterID = pModule->CreateObjectFilterID();
   pComp->m_sCacheIdentifier = sCacheIdentifier;
+  pComp->m_pCacheEntry = pEntry;
 
   // Use the first resolved material for body-level friction/restitution, or the default.
   const plJoltMaterial* pMaterial = (!cacheEntry.m_MaterialPtrs.IsEmpty() && cacheEntry.m_MaterialPtrs[0] != nullptr)
@@ -1602,14 +1538,20 @@ void plJoltWorldModule::AttachHeightfieldBody(plJoltWorldModule* pModule, plGame
 
   auto* pBodies = &pModule->GetJoltSystem()->GetBodyInterface();
   JPH::Body* pBody = pBodies->CreateBody(bodyCfg);
-  PL_ASSERT_DEV(pBody != nullptr, "Jolt body creation failed. Increase the maximum number of bodies.");
+  if (pBody == nullptr)
+  {
+    plLog::Error("Heightfield body creation failed. Increase the maximum number of bodies.");
+    pComp->DeleteComponent();
+    return PL_FAILURE;
+  }
 
   pComp->m_uiJoltBodyID = pBody->GetID().GetIndexAndSequenceNumber();
 
   pModule->QueueBodyToAdd(pBody, false);
+  return PL_SUCCESS;
 }
 
-void plJoltWorldModule::ReleaseHeightfieldCacheEntry(plStringView sIdentifier)
+void plJoltWorldModule::ReleaseHeightfieldCacheEntry(plStringView sIdentifier, const plJoltHeightfieldCacheEntry* pEntry)
 {
   if (sIdentifier.IsEmpty())
     return;
@@ -1618,10 +1560,9 @@ void plJoltWorldModule::ReleaseHeightfieldCacheEntry(plStringView sIdentifier)
   if (!it.IsValid())
     return;
 
-  PL_ASSERT_DEV(it.Value().m_uiRefCount > 0, "HeightfieldCacheEntry ref count underflow for '{}'", sIdentifier);
-  --it.Value().m_uiRefCount;
-
-  if (it.Value().m_uiRefCount == 0)
+  // A rebake may have replaced the map entry while an older body still owns its
+  // previous version. Releasing that body must not evict the new version.
+  if (it.Value().Borrow() == pEntry && pEntry->GetRefCount() == 2)
   {
     m_HeightfieldShapeCache.Remove(it);
   }
@@ -1629,23 +1570,27 @@ void plJoltWorldModule::ReleaseHeightfieldCacheEntry(plStringView sIdentifier)
 
 plResult plJoltWorldModule::TrySetHeightfieldCollider(plGameObject* pOwner, plStringView sIdentifier, plUInt8 uiCollisionLayer)
 {
+  if (sIdentifier.IsEmpty())
+    return PL_FAILURE;
+
   auto it = m_HeightfieldShapeCache.Find(sIdentifier);
   if (!it.IsValid())
     return PL_FAILURE;
 
-  AttachHeightfieldBody(this, pOwner, it.Value(), uiCollisionLayer, sIdentifier);
-  return PL_SUCCESS;
+  return AttachHeightfieldBody(this, pOwner, it.Value(), uiCollisionLayer, sIdentifier);
 }
 
 void plJoltWorldModule::CreateHeightfieldCollider(plGameObject* pOwner, plStringView sIdentifier, const HeightfieldColliderData& data)
 {
-  HeightfieldCacheEntry entry;
-  if (BuildJoltHeightfieldShape(data, entry).Failed())
+  plSharedPtr<HeightfieldCacheEntry> pEntry = PL_DEFAULT_NEW(HeightfieldCacheEntry);
+  if (BuildJoltHeightfieldShape(data, *pEntry).Failed())
     return;
 
-  HeightfieldCacheEntry& cachedEntry = m_HeightfieldShapeCache[sIdentifier];
-  cachedEntry = std::move(entry);
-  AttachHeightfieldBody(this, pOwner, cachedEntry, data.m_uiCollisionLayer, sIdentifier);
+  // Empty identifiers deliberately bypass the cache; unrelated terrain tiles must
+  // never share mutable geometry or surface ownership through the empty key.
+  if (!sIdentifier.IsEmpty())
+    m_HeightfieldShapeCache[sIdentifier] = pEntry;
+  AttachHeightfieldBody(this, pOwner, pEntry, data.m_uiCollisionLayer, sIdentifier).IgnoreResult();
 }
 
 void plJoltWorldModule::RemoveHeightfieldCollider(plGameObject* pOwner)
@@ -1755,7 +1700,7 @@ plResult plJoltWorldModule::BuildJoltTriangleMeshShape(const plPhysicsWorldModul
   return PL_SUCCESS;
 }
 
-void plJoltWorldModule::AttachTriangleMeshBody(plJoltWorldModule* pModule, plGameObject* pOwner, JPH::Ref<JPH::Shape> pShape, const plJoltMaterial* pMaterial, plUInt8 uiCollisionLayer)
+void plJoltWorldModule::AttachTriangleMeshBody(plJoltWorldModule* pModule, plGameObject* pOwner, JPH::Ref<JPH::Shape> pShape, const plJoltMaterial* pMaterial, plUInt8 uiCollisionLayer, plArrayPtr<const plSurfaceResourceHandle> surfaces)
 {
   PL_ASSERT_DEV(pShape != nullptr, "Invalid shape");
 
@@ -1769,6 +1714,7 @@ void plJoltWorldModule::AttachTriangleMeshBody(plJoltWorldModule* pModule, plGam
 
   plJoltTriangleMeshColliderComponent* pComp = nullptr;
   plJoltTriangleMeshColliderComponent::CreateComponent(pOwner, pComp);
+  pComp->m_Surfaces = surfaces;
 
   plJoltUserData* pUserData = nullptr;
   pComp->m_uiUserDataIndex = pModule->AllocateUserData(pUserData);
@@ -1809,7 +1755,7 @@ void plJoltWorldModule::CreateTriangleMeshCollider(plGameObject* pOwner, const T
   if (BuildJoltTriangleMeshShape(data, pShape, pMaterial).Failed())
     return;
 
-  AttachTriangleMeshBody(this, pOwner, pShape, pMaterial, data.m_uiCollisionLayer);
+  AttachTriangleMeshBody(this, pOwner, pShape, pMaterial, data.m_uiCollisionLayer, data.m_Surfaces);
 }
 
 void plJoltWorldModule::RemoveTriangleMeshCollider(plGameObject* pOwner)

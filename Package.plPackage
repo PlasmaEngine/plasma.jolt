@@ -8,14 +8,14 @@
 PackageInfo
 {
 	string %Id{"plasma.jolt"}
-	string %Version{"1.1.1"}
+	string %Version{"1.2.2"}
 	string %Publisher{"PlasmaTechnology"}
 	string %License{"MIT"}
 	string %Homepage{"https://plasmagameengine.com"}
 
-	string %MinEngineVersion{"0.8.0"}
-	string %MaxEngineVersion{"0.8.0"}
-	string %AbiTag{"win64-msvc19-0.8.0-dev"}
+	string %MinEngineVersion{"0.11.2"}
+	string %MaxEngineVersion{"0.11.2"}
+	string %AbiTag{"win64-msvc19-0.11.2-abi6-dev"}
 
 	string %DisplayName{"Jolt Physics"}
 	string %Category{"Physics"}
@@ -49,4 +49,6 @@ Jolt is compiled into the plugin, so there is nothing else to install."}
 	Component { string %Name{"editor-win64"} string %Platform{"win64"} }
 	Component { string %Name{"icon"} string %Platform{"any"} }
 	Component { string %Name{"banner"} string %Platform{"any"} }
+	// The editor plugin's icons, found under their ids (":/TypeIcons/plJoltRopeComponent.svg") in EditorIcons.
+	Component { string %Name{"tool"} string %Platform{"any"} string %Path{"EditorIcons"} }
 }

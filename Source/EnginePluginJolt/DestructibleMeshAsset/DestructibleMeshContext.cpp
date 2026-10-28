@@ -83,6 +83,8 @@ void plDestructibleMeshContext::OnInitialize()
     plSkyLightComponent::CreateComponent(pObj, pSkyLight);
     pSkyLight->SetCubeMapFile("{ 0b202e08-a64f-465d-b38e-15b81d161822 }");
     pSkyLight->SetReflectionProbeMode(plReflectionProbeMode::Static);
+    // The preview lighting is unitless and tuned by eye: PI gives the sky the fill it was tuned with.
+    pSkyLight->SetDiffuseIntensity(plMath::Pi<float>());
   }
 
   {
@@ -163,7 +165,7 @@ void plDestructibleMeshContext::UpdatePreview()
 
       for (plUInt32 m = 0; m < materials.GetCount(); ++m)
       {
-        plStringView sMaterial = plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::Lit);
+        plStringView sMaterial = plMaterialResource::GetDefaultMaterialFileName(plMaterialResource::DefaultMaterialType::OpenPBR);
         if (materials[m].IsValid())
         {
           sMaterial = materials[m].GetResourceID();

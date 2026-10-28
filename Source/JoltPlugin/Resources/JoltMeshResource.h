@@ -2,6 +2,7 @@
 
 #include <Core/ResourceManager/Resource.h>
 #include <Foundation/Math/BoundingBoxSphere.h>
+#include <Foundation/Threading/Mutex.h>
 #include <JoltPlugin/JoltPluginDLL.h>
 
 using plJoltMeshResourceHandle = plTypedResourceHandle<class plJoltMeshResource>;
@@ -43,7 +44,11 @@ public:
   const plDynamicArray<plSurfaceResourceHandle>& GetSurfaces() const { return m_Surfaces; }
 
   /// \brief Returns whether the mesh resource contains a triangle mesh. Triangle meshes and convex meshes are mutually exclusive.
-  bool HasTriangleMesh() const { return m_pTriangleMeshInstance != nullptr || !m_TriangleMeshData.IsEmpty(); }
+  bool HasTriangleMesh() const
+  {
+    PL_LOCK(m_InstanceMutex);
+    return m_pTriangleMeshInstance != nullptr || !m_TriangleMeshData.IsEmpty();
+  }
 
   /// \brief Creates a new instance (shape) of the triangle mesh.
   JPH::Shape* InstantiateTriangleMesh(plUInt64 uiUserData, const plDynamicArray<const plJoltMaterial*>& materials) const;
@@ -68,6 +73,8 @@ private:
 private:
   plBoundingBoxSphere m_Bounds;
   plDynamicArray<plSurfaceResourceHandle> m_Surfaces;
+  plDynamicArray<plUInt16> m_ConvexSurfaceIndices;
+  mutable plMutex m_InstanceMutex;
   mutable plHybridArray<plDataBuffer*, 1> m_ConvexMeshesData;
   mutable plDataBuffer m_TriangleMeshData;
   mutable JPH::Shape* m_pTriangleMeshInstance = nullptr;

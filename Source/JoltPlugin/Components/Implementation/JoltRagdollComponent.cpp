@@ -122,6 +122,13 @@ void plJoltRagdollComponentManager::Update(const plWorldModule::UpdateContext& c
 
   plJoltWorldModule* pModule = GetWorld()->GetOrCreateModule<plJoltWorldModule>();
 
+  // FetchResults has higher priority and joins the solver before this PostAsync stage.
+  for (auto it = GetComponents(); it.IsValid(); it.Next())
+  {
+    if (it->IsActiveAndSimulating() && it->m_bPendingPose)
+      it->CreatePendingLimbs();
+  }
+
   for (auto it : pModule->GetActiveRagdolls())
   {
     plJoltRagdollComponent* pComponent = it.Key();
@@ -129,9 +136,13 @@ void plJoltRagdollComponentManager::Update(const plWorldModule::UpdateContext& c
     pComponent->Update(false);
   }
 
-  for (plJoltRagdollComponent* pComponent : pModule->GetRagdollsPutToSleep())
+  plHybridArray<plComponentHandle, 16> sleepingRagdolls;
+  sleepingRagdolls = pModule->GetRagdollsPutToSleep();
+  for (const auto& hComponent : sleepingRagdolls)
   {
-    pComponent->Update(true);
+    plJoltRagdollComponent* pComponent = nullptr;
+    if (TryGetComponent(hComponent, pComponent) && pComponent->IsActiveAndSimulating())
+      pComponent->Update(true);
   }
 }
 
@@ -424,6 +435,7 @@ void plJoltRagdollComponent::CreateLimbsFromCurrentMeshPose()
 
 void plJoltRagdollComponent::DestroyAllLimbs()
 {
+  m_bPendingPose = false;
   if (m_pRagdoll)
   {
     m_pRagdoll->RemoveFromPhysicsSystem();
@@ -497,6 +509,9 @@ void plJoltRagdollComponent::SetAnimMode(plEnum<plJoltRagdollAnimMode> mode)
 
 void plJoltRagdollComponent::OnMsgPhysicsAddImpulse(plMsgPhysicsAddImpulse& ref_msg)
 {
+  if (!ref_msg.m_vImpulse.IsValid() || !ref_msg.m_vGlobalPosition.IsValid())
+    return;
+
   const float fImpulse = plJoltCore::GetImpulseTypeConfig().GetImpulseForWeight(ref_msg.m_uiImpulseType, m_uiWeightCategory);
 
   if (!HasCreatedLimbs())
@@ -507,9 +522,18 @@ void plJoltRagdollComponent::OnMsgPhysicsAddImpulse(plMsgPhysicsAddImpulse& ref_
     return;
   }
 
-  // TODO: normalize by number of limbs
+  if (ref_msg.m_pInternalPhysicsActor == nullptr)
+    return;
+
   const plUInt32 uiBodyId = reinterpret_cast<size_t>(ref_msg.m_pInternalPhysicsActor) & 0xFFFFFFFF;
-  GetWorld()->GetModule<plJoltWorldModule>()->AddImpulse(uiBodyId, ref_msg.m_vImpulse * fImpulse, ref_msg.m_vGlobalPosition);
+  for (const auto& bodyId : m_pRagdoll->GetBodyIDs())
+  {
+    if (bodyId.GetIndexAndSequenceNumber() == uiBodyId)
+    {
+      GetWorld()->GetModule<plJoltWorldModule>()->AddImpulse(uiBodyId, ref_msg.m_vImpulse * fImpulse, ref_msg.m_vGlobalPosition);
+      return;
+    }
+  }
 }
 
 void plJoltRagdollComponent::SetInitialImpulse(const plVec3& vPosition, const plVec3& vDirectionAndStrength)
@@ -572,9 +596,32 @@ void plJoltRagdollComponent::OnAnimationPoseUpdated(plMsgAnimationPoseUpdated& r
   if (m_StartMode != plJoltRagdollStartMode::WithNextAnimPose)
     return;
 
-  m_CurrentLimbTransforms = ref_poseMsg.m_ModelTransforms;
+  if (ref_poseMsg.m_pRootTransform == nullptr)
+    return;
 
-  CreateLimbsFromPose(ref_poseMsg);
+  m_CurrentLimbTransforms = ref_poseMsg.m_ModelTransforms;
+  m_PendingRootTransform = *ref_poseMsg.m_pRootTransform;
+  m_bPendingPose = true;
+}
+
+void plJoltRagdollComponent::CreatePendingLimbs()
+{
+  m_bPendingPose = false;
+  if (HasCreatedLimbs() || EnsureSkeletonIsKnown().Failed())
+    return;
+
+  plResourceLock<plSkeletonResource> pSkeleton(m_hSkeleton, plResourceAcquireMode::BlockTillLoaded);
+  if (m_CurrentLimbTransforms.GetCount() != pSkeleton->GetDescriptor().m_Skeleton.GetJointCount())
+  {
+    plLog::Warning("Ragdoll pose no longer matches its skeleton; discarding pending creation.");
+    return;
+  }
+
+  plMsgAnimationPoseUpdated pose;
+  pose.m_pRootTransform = &m_PendingRootTransform;
+  pose.m_pSkeleton = &pSkeleton->GetDescriptor().m_Skeleton;
+  pose.m_ModelTransforms = m_CurrentLimbTransforms;
+  CreateLimbsFromPose(pose);
 }
 
 void plJoltRagdollComponent::OnRetrieveBoneState(plMsgRetrieveBoneState& ref_msg) const
@@ -725,9 +772,13 @@ plVec3 plJoltRagdollComponent::RetrieveRagdollPose()
   const JPH::RVec3 vCurPosition = plJoltConversionUtils::ToVec3(GetOwner()->GetGlobalPosition());
 
   const int body_count = (int)m_pRagdoll->GetBodyCount();
+  if (body_count == 0)
+    return GetOwner()->GetGlobalPosition();
   JPH::BodyLockMultiRead lock(static_cast<const JPH::BodyLockInterface&>(m_pJoltSystem->GetBodyLockInterface()), m_pRagdoll->GetBodyIDs().data(), body_count);
 
   const JPH::Body* root = lock.GetBody(0);
+  if (root == nullptr)
+    return GetOwner()->GetGlobalPosition();
   JPH::RMat44 root_transform = root->GetWorldTransform();
   JPH::RVec3 vRootOffset = root_transform.GetTranslation();
   vRootOffset = vCurPosition + (vRootOffset - vCurPosition) * fLerpToPos; // interpolate the object position towards the root bone position
@@ -836,6 +887,13 @@ void plJoltRagdollComponent::CreateLimbsFromPose(const plMsgAnimationPoseUpdated
 
   CreateAllLimbs(*pSkeletonResource.GetPointer(), pose, worldModule, fObjectScale, ragdollSettings);
 
+  if (ragdollSettings->mParts.empty())
+  {
+    plLog::Warning("Ragdoll skeleton '{}' contains no usable collision limbs. Add collision geometry to the skeleton asset.", pSkeletonResource->GetResourceIdOrDescription());
+    DestroyAllLimbs();
+    return;
+  }
+
   {
     const float fInitialMass = plJoltCore::GetWeightCategoryConfig().GetMassForWeightCategory(m_uiWeightCategory, 50.0f, m_fWeightMass, m_fWeightScale);
 
@@ -856,6 +914,13 @@ void plJoltRagdollComponent::CreateLimbsFromPose(const plMsgAnimationPoseUpdated
   ragdollSettings->CalculateConstraintIndexToBodyIdxPair();
 
   m_pRagdoll = ragdollSettings->CreateRagdoll(m_uiObjectFilterID, reinterpret_cast<plUInt64>(m_pJoltUserData), m_pJoltSystem);
+
+  if (m_pRagdoll == nullptr)
+  {
+    plLog::Error("Failed to create ragdoll bodies for '{}'. Check collision geometry and the physics body limit.", pSkeletonResource->GetResourceIdOrDescription());
+    DestroyAllLimbs();
+    return;
+  }
 
   m_pRagdoll->AddRef();
   m_pRagdoll->AddToPhysicsSystem(JPH::EActivation::Activate);

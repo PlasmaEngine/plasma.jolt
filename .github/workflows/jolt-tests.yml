@@ -1,0 +1,38 @@
+name: jolt-tests
+
+# The tests link against a built engine SDK, so they run on a self-hosted Windows runner that has one.
+# Set the repository variable PLASMA_SDK_ROOT to the engine checkout on that runner.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  headless:
+    runs-on: [self-hosted, windows]
+    env:
+      PLASMA_SDK_ROOT: ${{ vars.PLASMA_SDK_ROOT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Regression checks (Development)
+        shell: powershell
+        run: ./Tests/Run-JoltTests.ps1 -Configuration Development
+
+      - name: Soak scene (Debug, short)
+        shell: powershell
+        run: ./Tests/Run-JoltTests.ps1 -Configuration Debug -StressSeconds 60
+
+  r0-soak:
+    # The R0 gate: ten minutes under the Debug allocator. Run on demand because of its length.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, windows]
+    env:
+      PLASMA_SDK_ROOT: ${{ vars.PLASMA_SDK_ROOT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Soak scene (Debug, ten minutes)
+        shell: powershell
+        run: ./Tests/Run-JoltTests.ps1 -Configuration Debug -StressSeconds 600

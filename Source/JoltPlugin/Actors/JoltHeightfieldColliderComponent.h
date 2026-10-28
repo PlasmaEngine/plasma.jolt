@@ -3,6 +3,9 @@
 #include <Core/World/Component.h>
 #include <Core/World/World.h>
 #include <JoltPlugin/JoltPluginDLL.h>
+#include <Foundation/Types/SharedPtr.h>
+
+struct plJoltHeightfieldCacheEntry;
 
 using plJoltHeightfieldColliderComponentManager = plComponentManager<class plJoltHeightfieldColliderComponent, plBlockStorageType::FreeList>;
 
@@ -31,4 +34,5 @@ private:
 
   /// Identifier of the shape cache entry this body was created from. Empty if the shape is not cached.
   plString m_sCacheIdentifier;
+  plSharedPtr<plJoltHeightfieldCacheEntry> m_pCacheEntry;
 };

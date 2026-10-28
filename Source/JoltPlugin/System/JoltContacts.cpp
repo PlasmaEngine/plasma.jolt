@@ -171,7 +171,10 @@ void plJoltContactListener::OnContact(const JPH::Body& body0, const JPH::Body& b
         {
           msg.m_pInternalPhysicsActor = reinterpret_cast<void*>(static_cast<size_t>(body0.GetID().GetIndexAndSequenceNumber()));
           msg.m_pInternalPhysicsShape = reinterpret_cast<void*>(static_cast<size_t>(manifold.mSubShapeID1.GetValue()));
-          pComp->SendMessage(msg);
+          PL_LOCK(m_ContactMessagesMutex);
+          auto& queued = m_ContactMessages.ExpandAndGetRef();
+          queued.m_hTarget = pComp->GetHandle();
+          queued.m_Message = msg;
         }
       }
 
@@ -181,10 +184,39 @@ void plJoltContactListener::OnContact(const JPH::Body& body0, const JPH::Body& b
         {
           msg.m_pInternalPhysicsActor = reinterpret_cast<void*>(static_cast<size_t>(body1.GetID().GetIndexAndSequenceNumber()));
           msg.m_pInternalPhysicsShape = reinterpret_cast<void*>(static_cast<size_t>(manifold.mSubShapeID2.GetValue()));
-          pComp->SendMessage(msg);
+          PL_LOCK(m_ContactMessagesMutex);
+          auto& queued = m_ContactMessages.ExpandAndGetRef();
+          queued.m_hTarget = pComp->GetHandle();
+          queued.m_Message = msg;
         }
       }
     }
+  }
+}
+
+void plJoltContactListener::SendContactMessages()
+{
+  plDynamicArray<ContactMessage> messages;
+  {
+    PL_LOCK(m_ContactMessagesMutex);
+    messages.Swap(m_ContactMessages);
+  }
+
+  for (auto& queued : messages)
+  {
+    plComponent* pComponent = nullptr;
+    if (!m_pWorld->TryGetComponent(queued.m_hTarget, pComponent) || !pComponent->IsActiveAndSimulating())
+      continue;
+
+    auto* pModule = m_pWorld->GetModule<plJoltWorldModule>();
+    const JPH::BodyID bodyID(static_cast<plUInt32>(reinterpret_cast<size_t>(queued.m_Message.m_pInternalPhysicsActor)));
+    {
+      JPH::BodyLockRead bodyLock(pModule->GetJoltSystem()->GetBodyLockInterface(), bodyID);
+      if (!bodyLock.Succeeded() || plJoltUserData::GetComponent(reinterpret_cast<const void*>(bodyLock.GetBody().GetUserData())) != pComponent)
+        continue;
+    }
+
+    pComponent->SendMessage(queued.m_Message);
   }
 }
 

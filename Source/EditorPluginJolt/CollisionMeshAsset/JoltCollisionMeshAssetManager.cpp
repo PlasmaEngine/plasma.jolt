@@ -1,7 +1,7 @@
 #include <EditorPluginJolt/EditorPluginJoltPCH.h>
 
 #include <EditorPluginJolt/CollisionMeshAsset/JoltCollisionMeshAssetManager.h>
-#include <EditorPluginJolt/CollisionMeshAsset/JoltCollisionMeshAssetWindow.moc.h>
+#include <EditorPluginJolt/CollisionMeshAsset/JoltCollisionMeshAssetWindow.h>
 
 PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plJoltCollisionMeshAssetDocumentManager, 1, plRTTIDefaultAllocator<plJoltCollisionMeshAssetDocumentManager>)
 PL_END_DYNAMIC_REFLECTED_TYPE;
@@ -47,7 +47,7 @@ void plJoltCollisionMeshAssetDocumentManager::OnDocumentManagerEvent(const plDoc
     {
       if (e.m_pDocument->GetDynamicRTTI() == plGetStaticRTTI<plJoltCollisionMeshAssetDocument>())
       {
-        new plQtJoltCollisionMeshAssetDocumentWindow(static_cast<plAssetDocument*>(e.m_pDocument)); // NOLINT: Not a memory leak
+        new plJoltCollisionMeshAssetDocumentWindow(static_cast<plAssetDocument*>(e.m_pDocument)); // NOLINT: Not a memory leak
       }
     }
     break;

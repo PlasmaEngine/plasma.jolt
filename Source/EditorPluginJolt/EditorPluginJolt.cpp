@@ -4,9 +4,12 @@
 #include <EditorFramework/Actions/CameraModeSwitchActions.h>
 #include <EditorFramework/Actions/CommonAssetActions.h>
 #include <EditorFramework/Actions/ProjectActions.h>
+#include <EditorFramework/Actions/ViewActions.h>
 #include <EditorPluginJolt/Actions/JoltActions.h>
 #include <EditorPluginJolt/CollisionMeshAsset/JoltCollisionMeshAssetObjects.h>
-#include <EditorPluginJolt/Dialogs/JoltProjectSettingsDlg.moc.h>
+#include <EditorPluginJolt/Dialogs/JoltProjectSettingsEngineDlg.h>
+#include <EditorUi/Widgets.h>
+#include <Foundation/Configuration/Plugin.h>
 #include <GameEngine/Physics/CollisionFilter.h>
 #include <GuiFoundation/Action/ActionMapManager.h>
 #include <GuiFoundation/Action/CommandHistoryActions.h>
@@ -29,29 +32,68 @@ void plCharacterControllerComponent_PropertyMetaStateEventHandler(plPropertyMeta
 void plRopeComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& e);
 void plClothSheetComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& e);
 
+/// The package's icon folder: the icons under their ids (":/TypeIcons/plJoltRopeComponent.svg" is
+/// "EditorIcons/TypeIcons/plJoltRopeComponent.svg"). The plugin binary lives in <package>/Bin/<configuration>.
+static plString s_sIconFolder;
+
+static void RegisterIconFolder()
+{
+  plStringBuilder sPlugin, sCopy;
+  plPlugin::GetPluginPaths("plEditorPluginJolt", sPlugin, sCopy, 0);
+
+  plStringBuilder sFolder = sPlugin.GetFileDirectory();
+  sFolder.AppendPath("..", "..", "EditorIcons");
+  sFolder.MakeCleanPath();
+
+  s_sIconFolder = sFolder;
+  plEditorUi::AddIconFolder(s_sIconFolder);
+}
+
+static void UnregisterIconFolder()
+{
+  plEditorUi::RemoveIconFolder(s_sIconFolder);
+  s_sIconFolder.Clear();
+}
+
 void OnLoadPlugin()
 {
+  RegisterIconFolder();
+
   plToolsProject::GetSingleton()->s_Events.AddEventHandler(ToolsProjectEventHandler);
+
+  plJoltAssetViewActions::RegisterActions();
 
   // Collision Mesh
   {
     plPropertyMetaState::GetSingleton()->m_Events.AddEventHandler(plJoltCollisionMeshAssetProperties::PropertyMetaStateEventHandler);
 
-    // Menu Bar
+    // Menu Bar: the same menus as every other asset window
     {
       plActionMapManager::RegisterActionMap("JoltCollisionMeshAssetMenuBar").IgnoreResult();
+
+      plStandardMenus::MapActions("JoltCollisionMeshAssetMenuBar", plStandardMenuTypes::Default | plStandardMenuTypes::Edit);
+      plProjectActions::MapActions("JoltCollisionMeshAssetMenuBar");
+      plDocumentActions::MapMenuActions("JoltCollisionMeshAssetMenuBar");
+      plAssetActions::MapMenuActions("JoltCollisionMeshAssetMenuBar");
+      plCommandHistoryActions::MapActions("JoltCollisionMeshAssetMenuBar");
+      plEditActions::MapActions("JoltCollisionMeshAssetMenuBar", false, false);
     }
 
-    // Tool Bar
+    // Tool Bar: save, undo, redo and transform like every other asset window, then grid and camera mode
     {
       plActionMapManager::RegisterActionMap("JoltCollisionMeshAssetToolBar").IgnoreResult();
+      plDocumentActions::MapToolbarActions("JoltCollisionMeshAssetToolBar");
+      plCommandHistoryActions::MapActions("JoltCollisionMeshAssetToolBar", "");
+      plAssetActions::MapToolBarActions("JoltCollisionMeshAssetToolBar", true);
       plCommonAssetActions::MapToolbarActions("JoltCollisionMeshAssetToolBar", plCommonAssetUiState::Grid);
-			plCameraModeSwitchActions::MapToolbarActions("JoltCollisionMeshAssetToolBar");
+      plCameraModeSwitchActions::MapToolbarActions("JoltCollisionMeshAssetToolBar");
     }
 
-		// View Tool Bar
+    // View Tool Bar
     {
       plActionMapManager::RegisterActionMap("JoltCollisionMeshAssetViewToolBar").IgnoreResult();
+      plViewActions::MapToolbarActions("JoltCollisionMeshAssetViewToolBar", plViewActions::RenderMode);
+      plJoltAssetViewActions::MapViewToolBarActions("JoltCollisionMeshAssetViewToolBar", false);
     }
   }
 
@@ -83,6 +125,8 @@ void OnLoadPlugin()
     // View Tool Bar
     {
       plActionMapManager::RegisterActionMap("DestructibleMeshAssetViewToolBar").IgnoreResult();
+      plViewActions::MapToolbarActions("DestructibleMeshAssetViewToolBar", plViewActions::RenderMode);
+      plJoltAssetViewActions::MapViewToolBarActions("DestructibleMeshAssetViewToolBar", true);
     }
   }
 
@@ -116,8 +160,11 @@ void OnUnloadPlugin()
   plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plClothSheetComponent_PropertyMetaStateEventHandler);
 
   plJoltActions::UnregisterActions();
+  plJoltAssetViewActions::UnregisterActions();
   plToolsProject::GetSingleton()->s_Events.RemoveEventHandler(ToolsProjectEventHandler);
   plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plJoltCollisionMeshAssetProperties::PropertyMetaStateEventHandler);
+
+  UnregisterIconFolder();
 }
 
 PL_PLUGIN_ON_LOADED()
@@ -204,12 +251,12 @@ static void ToolsProjectEventHandler(const plToolsProjectEvent& e)
 {
   if (e.m_Type == plToolsProjectEvent::Type::ProjectSaveState)
   {
-    plQtJoltProjectSettingsDlg::EnsureConfigFileExists();
+    plJoltProjectSettingsEngineDlg::EnsureConfigFileExists();
   }
 
   if (e.m_Type == plToolsProjectEvent::Type::ProjectOpened)
   {
-    plQtJoltProjectSettingsDlg::EnsureConfigFileExists();
+    plJoltProjectSettingsEngineDlg::EnsureConfigFileExists();
     UpdateCollisionLayerDynamicEnumValues();
     UpdateWeightCategoryDynamicEnumValues();
     UpdateImpulseTypeDynamicEnumValues();

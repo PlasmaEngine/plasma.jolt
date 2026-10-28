@@ -14,7 +14,8 @@ public class EditorPluginJoltModule : ModuleRules
 
         PublicDependencies.Add("JoltCookingModule");
 
-        PlasmaPackageQt.ConfigureQtModule(this, context, "EditorPluginJoltModule",
-            "Source/EditorPluginJolt", "Core", "Gui", "Widgets");
+        // The project settings content is engine-drawn: EditorUi and the retained UI runtime.
+        PlasmaPackageSdk.AddImportLibrary(this, context, "plEditorUi");
+        PlasmaPackageSdk.AddImportLibrary(this, context, "plGameUiPlugin");
     }
 }

@@ -20,5 +20,11 @@ public class JoltModule : ModuleRules
 
         CppStandard = CppStandard.Cpp20;
         TreatWarningsAsErrors = false;
+
+        // Folded into the package's shared objects, which the Android linker requires to be position independent.
+        if (context.Platform == TargetPlatform.Android)
+        {
+            AdditionalCompilerFlags.Add("-fPIC");
+        }
     }
 }

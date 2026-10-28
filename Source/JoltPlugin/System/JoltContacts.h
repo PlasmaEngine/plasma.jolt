@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Core/World/Declarations.h>
+#include <Core/Interfaces/PhysicsWorldModule.h>
 #include <Physics/Collision/ContactListener.h>
 #include <Physics/SoftBody/SoftBodyContactListener.h>
 
@@ -79,6 +80,17 @@ public:
   plMap<plUInt64, TriggerObj> m_Trigs;
 
   void RemoveTrigger(const plJoltTriggerComponent* pTrigger);
+
+  // Called after the solver task has joined; no gameplay runs under solver locks.
+  void SendContactMessages();
+
+  struct ContactMessage
+  {
+    plComponentHandle m_hTarget;
+    plMsgPhysicContact m_Message;
+  };
+  plMutex m_ContactMessagesMutex;
+  plDynamicArray<ContactMessage> m_ContactMessages;
 
   virtual void OnContactAdded(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold, JPH::ContactSettings& ref_settings) override;
   virtual void OnContactPersisted(const JPH::Body& body1, const JPH::Body& body2, const JPH::ContactManifold& manifold, JPH::ContactSettings& ref_settings) override;

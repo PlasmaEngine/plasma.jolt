@@ -5,6 +5,7 @@
 #include <Core/WorldSerializer/WorldWriter.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <JoltPlugin/Resources/JoltMaterial.h>
 #include <JoltPlugin/Shapes/JoltShapeCapsuleComponent.h>
 #include <JoltPlugin/Utilities/JoltConversionUtils.h>
@@ -84,7 +85,19 @@ void plJoltShapeCapsuleComponent::SetHeight(float f)
 
 void plJoltShapeCapsuleComponent::CreateShapes(plDynamicArray<plJoltSubShape>& out_Shapes, const plTransform& rootTransform, float fDensity, const plJoltMaterial* pMaterial)
 {
-  JPH::Ref<JPH::CapsuleShape> pNewShape = new JPH::CapsuleShape(m_fHeight * 0.5f, m_fRadius);
+  if (!plMath::IsFinite(m_fHeight) || !plMath::IsFinite(m_fRadius) || m_fHeight < 0.0f || m_fRadius <= 0.0f)
+  {
+    plLog::Error("Capsule collider requires a finite non-negative height and a finite positive radius.");
+    return;
+  }
+
+  // A capsule with zero cylindrical height is a sphere; Jolt's CapsuleShape
+  // constructor requires a strictly positive half-height.
+  JPH::Ref<JPH::ConvexShape> pNewShape;
+  if (m_fHeight == 0.0f)
+    pNewShape = new JPH::SphereShape(m_fRadius);
+  else
+    pNewShape = new JPH::CapsuleShape(m_fHeight * 0.5f, m_fRadius);
   pNewShape->SetDensity(fDensity);
   pNewShape->SetUserData(reinterpret_cast<plUInt64>(GetUserData()));
   pNewShape->SetMaterial(pMaterial);
