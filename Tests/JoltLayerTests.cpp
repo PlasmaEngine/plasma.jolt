@@ -1,39 +1,6 @@
 #include "JoltTestSupport.h"
-#include <JoltPlugin/System/JoltCore.h>
 
 using namespace JoltTest;
-
-/// Sets up the layers used by these tests: 1 and 2 collide with the default layer and with themselves, but not with each other.
-class LayerConfig
-{
-public:
-  LayerConfig()
-    : m_pConfig(const_cast<plCollisionFilterConfig*>(&plJoltCore::GetCollisionFilterConfig()))
-  {
-    for (plUInt32 uiGroup = 0; uiGroup < 3; ++uiGroup)
-      m_Saved[uiGroup] = m_pConfig->GetFilterMask(uiGroup);
-
-    m_pConfig->EnableCollision(0, 0, true);
-    m_pConfig->EnableCollision(0, 1, true);
-    m_pConfig->EnableCollision(0, 2, true);
-    m_pConfig->EnableCollision(1, 1, true);
-    m_pConfig->EnableCollision(2, 2, true);
-    m_pConfig->EnableCollision(1, 2, false);
-  }
-
-  ~LayerConfig()
-  {
-    for (plUInt32 uiGroup = 0; uiGroup < 3; ++uiGroup)
-    {
-      for (plUInt32 uiOther = 0; uiOther < 3; ++uiOther)
-        m_pConfig->EnableCollision(uiGroup, uiOther, (m_Saved[uiGroup] & PL_BIT(uiOther)) != 0);
-    }
-  }
-
-private:
-  plCollisionFilterConfig* m_pConfig = nullptr;
-  plUInt32 m_Saved[3] = {};
-};
 
 /// Two dynamic bodies on layers that do not collide fall through each other, bodies on the same layer stack.
 static void TestSimulationFiltering()
@@ -105,12 +72,50 @@ static void TestIgnoreObjectFilter()
   Check(!test.GetJolt().Raycast(result, plVec3(-5, 0, 0), plVec3(1, 0, 0), 10.0f, ignore), "the ray skips the ignored object");
 }
 
-void RunLayerTests()
-{
-  BeginGroup("Layers");
+PL_CREATE_SIMPLE_TEST_GROUP(JoltLayers);
 
+PL_CREATE_SIMPLE_TEST(JoltLayers, SimulationFiltering)
+{
   TestSimulationFiltering();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltLayers, QueryFiltering)
+{
   TestQueryFiltering();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltLayers, ShapeTypeFiltering)
+{
   TestShapeTypeFiltering();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltLayers, IgnoreObjectFilter)
+{
   TestIgnoreObjectFilter();
+}
+
+/// Layers that do not collide with themselves let bodies pass through each other, and still land on the default layer.
+static void TestNoSelfCollision()
+{
+  LayerConfig layers;
+  layers.Allow(1, 1, false);
+
+  World test;
+  test.AddFloor();
+
+  const plGameObjectHandle hA = test.AddDynamicBox(plVec3(0, 0, 0.5f), plVec3(0.5f), 1)->GetHandle();
+  const plGameObjectHandle hB = test.AddDynamicBox(plVec3(0, 0, 0.5f), plVec3(0.5f), 1)->GetHandle();
+
+  test.StepSeconds(3.0f);
+
+  const plVec3 vA = test.GetPosition(hA);
+  const plVec3 vB = test.GetPosition(hB);
+  CheckNear(vA.z, 0.5f, 0.05f, "the first body lands on the default layer floor");
+  CheckNear(vB.z, 0.5f, 0.05f, "the second body lands on the default layer floor");
+  Check((vA - vB).GetLength() < 0.05f, "bodies of a layer that does not collide with itself stay overlapped");
+}
+
+PL_CREATE_SIMPLE_TEST(JoltLayers, NoSelfCollision)
+{
+  TestNoSelfCollision();
 }

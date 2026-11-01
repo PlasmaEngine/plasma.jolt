@@ -66,7 +66,7 @@ static void TestConstraintBreaksAboveThreshold()
   HangingBox scene(0.01f);
   scene.m_World.StepSeconds(3.0f);
 
-  Check(scene.BoxHeight() < 6.0f, "the box falls once the joint exceeds its break force", Category::R1Gate);
+  Check(scene.BoxHeight() < 6.0f, "the box falls once the joint exceeds its break force");
 }
 
 /// The break force is compared with the solver's per-step impulse, so a joint rated for half the weight still holds.
@@ -84,7 +84,7 @@ static void TestBreakForceIsInNewtons()
   HangingBox scene(fHalfWeight);
   scene.m_World.StepSeconds(3.0f);
 
-  Check(scene.BoxHeight() < 6.0f, "a joint rated for half the weight in newtons breaks", Category::R1Gate);
+  OpenDefect("PH-B32", scene.BoxHeight() < 6.0f, "a joint rated for half the weight in newtons breaks");
 }
 
 /// Breaking a constraint through the API releases the box and stepping afterwards stays stable.
@@ -118,14 +118,34 @@ static void TestDeletingJoinedBodyKeepsWorldStable()
   Check(scene.m_World.GetPosition(scene.m_pAnchor->GetHandle()).z > 9.0f, "the anchor is unaffected when the joined body is deleted");
 }
 
-void RunBreakTests()
-{
-  BeginGroup("Breaks");
+PL_CREATE_SIMPLE_TEST_GROUP(JoltBreaks);
 
+PL_CREATE_SIMPLE_TEST(JoltBreaks, ConstraintHoldsBelowThreshold)
+{
   TestConstraintHoldsBelowThreshold();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltBreaks, ConstraintWithoutBreakForceHolds)
+{
   TestConstraintWithoutBreakForceHolds();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltBreaks, ConstraintBreaksAboveThreshold)
+{
   TestConstraintBreaksAboveThreshold();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltBreaks, BreakForceIsInNewtons)
+{
   TestBreakForceIsInNewtons();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltBreaks, ExplicitBreak)
+{
   TestExplicitBreak();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltBreaks, DeletingJoinedBodyKeepsWorldStable)
+{
   TestDeletingJoinedBodyKeepsWorldStable();
 }

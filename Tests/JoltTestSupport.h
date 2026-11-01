@@ -2,44 +2,68 @@
 
 #include <Core/Interfaces/PhysicsQuery.h>
 #include <Core/World/World.h>
-#include <Foundation/Configuration/Startup.h>
 #include <JoltPlugin/Actors/JoltDynamicActorComponent.h>
 #include <JoltPlugin/Actors/JoltStaticActorComponent.h>
 #include <JoltPlugin/Shapes/JoltShapeBoxComponent.h>
+#include <JoltPlugin/System/JoltCore.h>
 #include <JoltPlugin/System/JoltWorldModule.h>
-#include <cstdio>
+#include <TestFramework/Framework/TestFramework.h>
+#include <source_location>
 
 /// \file
-/// Shared pieces of the headless Jolt tests: result counting, a world fixture and scene builders.
+/// Shared pieces of the headless Jolt tests: check helpers, a world fixture and scene builders.
 
 namespace JoltTest
 {
-  /// \brief How a failing check is treated.
-  enum class Category
+  /// Sets up the layers used by these tests: 1 and 2 collide with the default layer and with themselves, but not with each other.
+  class LayerConfig
   {
-    /// Must pass. A failure fails the run.
-    Regression,
-    /// Describes behaviour that an R1 fix is supposed to deliver. A failure is reported as an open item and only fails the run with --strict.
-    R1Gate,
+  public:
+    LayerConfig()
+      : m_pConfig(const_cast<plCollisionFilterConfig*>(&plJoltCore::GetCollisionFilterConfig()))
+    {
+      for (plUInt32 uiGroup = 0; uiGroup < 3; ++uiGroup)
+        m_Saved[uiGroup] = m_pConfig->GetFilterMask(uiGroup);
+
+      m_pConfig->EnableCollision(0, 0, true);
+      m_pConfig->EnableCollision(0, 1, true);
+      m_pConfig->EnableCollision(0, 2, true);
+      m_pConfig->EnableCollision(1, 1, true);
+      m_pConfig->EnableCollision(2, 2, true);
+      m_pConfig->EnableCollision(1, 2, false);
+    }
+
+    /// rief Changes whether two layers collide. Restored when the object goes out of scope.
+    void Allow(plUInt32 uiLayerA, plUInt32 uiLayerB, bool bCollide) { m_pConfig->EnableCollision(uiLayerA, uiLayerB, bCollide); }
+
+    ~LayerConfig()
+    {
+      for (plUInt32 uiGroup = 0; uiGroup < 3; ++uiGroup)
+      {
+        for (plUInt32 uiOther = 0; uiOther < 3; ++uiOther)
+          m_pConfig->EnableCollision(uiGroup, uiOther, (m_Saved[uiGroup] & PL_BIT(uiOther)) != 0);
+      }
+    }
+
+  private:
+    plCollisionFilterConfig* m_pConfig = nullptr;
+    plUInt32 m_Saved[3] = {};
   };
 
-  /// \brief Records one check. Prints a line for every failure.
-  void Check(bool bValue, const char* szMessage, Category category = Category::Regression);
+  /// \brief Records a check with the engine test framework. A failure is reported at the caller's file and line.
+  void Check(bool bValue, const char* szMessage, std::source_location location = std::source_location::current());
 
   /// \brief Records a check that |fActual - fExpected| <= fTolerance. The values are printed on failure.
-  void CheckNear(float fActual, float fExpected, float fTolerance, const char* szMessage, Category category = Category::Regression);
+  void CheckNear(float fActual, float fExpected, float fTolerance, const char* szMessage, std::source_location location = std::source_location::current());
 
-  /// \brief Names the test group that the following checks belong to.
-  void BeginGroup(const char* szName);
+  /// \brief A check that describes the behaviour a roadmap bug (for example "PH-B14") is supposed to deliver.
+  ///
+  /// While the bug is open a failure is logged as "OPEN PH-B14: ..." and does not fail the run. A pass is logged as a prompt to turn
+  /// the check into a regular one. With -joltStrictDefects a failure fails the run.
+  void OpenDefect(const char* szBugId, bool bValue, const char* szMessage, std::source_location location = std::source_location::current());
 
-  struct Totals
-  {
-    plUInt32 m_uiChecks = 0;
-    plUInt32 m_uiFailures = 0;
-    plUInt32 m_uiOpenR1Items = 0;
-  };
-
-  const Totals& GetTotals();
+  /// \brief OpenDefect() for |fActual - fExpected| <= fTolerance.
+  void OpenDefectNear(const char* szBugId, float fActual, float fExpected, float fTolerance, const char* szMessage, std::source_location location = std::source_location::current());
 
   /// \brief A world that updates with a fixed time step and has the Jolt world module.
   class World
@@ -86,24 +110,4 @@ namespace JoltTest
 
   /// \brief Counts the different actor objects among the results of a ray cast.
   plUInt32 CountDistinctActors(const plPhysicsCastResultArray& results);
-
-  /// \brief Starts the engine systems the tests need. Call once before any test.
-  void Startup();
-
-  /// \brief Shuts down what Startup() started.
-  void Shutdown();
 } // namespace JoltTest
-
-/// The test groups. Each starts its own worlds and records its checks through JoltTest::Check().
-void RunP0Regressions();
-void RunStackingTests();
-void RunLayerTests();
-void RunTriggerTests();
-void RunQueryTests();
-void RunBreakTests();
-void RunBuoyancyTests();
-void RunCharacterTests();
-void RunLifecycleTests();
-
-/// \brief Runs the soak scene for the given amount of wall-clock seconds. Returns the number of simulated frames.
-plUInt64 RunStressScene(double fSeconds);

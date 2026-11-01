@@ -1,10 +1,13 @@
 #include "JoltTestSupport.h"
+#include <Foundation/Utilities/CommandLineOptions.h>
 #include <Foundation/Time/Stopwatch.h>
 #include <JoltPlugin/Character/JoltDefaultCharacterComponent.h>
 #include <JoltPlugin/Components/JoltRagdollComponent.h>
 #include <JoltPlugin/Constraints/JoltFixedConstraintComponent.h>
 
 using namespace JoltTest;
+
+plCommandLineOptionInt opt_JoltSoakSeconds("_JoltTest", "-joltSoakSeconds", "Runs the soak scene for this many wall-clock seconds.", 0);
 
 /// \brief The soak scene behind the R0 gate. It runs against the Debug allocator and asserts so that corrupt state is caught early.
 ///
@@ -191,17 +194,56 @@ private:
   plUInt64 m_uiRayHits = 0;
 };
 
-plUInt64 RunStressScene(double fSeconds)
+/// The ragdolls of the soak scene have no skeleton, so every one of them logs an error. That is how the scene exercises their lifetime
+/// and it is not counted as a failure; everything else is passed on to the test framework.
+class IgnoreRagdollErrors : public plLogInterface
 {
-  BeginGroup("Stress");
-  std::printf("  running the soak scene for %.0f s\n", fSeconds);
+public:
+  virtual void HandleLogMessage(const plLoggingEventData& le) override
+  {
+    if (le.m_EventType == plLogMsgType::ErrorMsg && le.m_sText.FindSubString("No skeleton available for ragdoll"))
+      return;
+
+    if (m_pParent != nullptr)
+      m_pParent->HandleLogMessage(le);
+  }
+
+  plLogInterface* m_pParent = nullptr;
+};
+
+class IgnoreRagdollErrorsScope : public plLogSystemScope
+{
+public:
+  explicit IgnoreRagdollErrorsScope(IgnoreRagdollErrors* pFilter)
+    : plLogSystemScope(pFilter)
+  {
+    pFilter->m_pParent = m_pPrevious;
+    plGlobalLog::SetGlobalLogOverride(pFilter);
+  }
+
+  ~IgnoreRagdollErrorsScope() { plGlobalLog::SetGlobalLogOverride(nullptr); }
+};
+
+PL_CREATE_SIMPLE_TEST_GROUP(JoltSoak);
+
+/// Runs for -joltSoakSeconds wall-clock seconds (600 is the R0 gate, in the Debug configuration). Without it the test does nothing.
+PL_CREATE_SIMPLE_TEST(JoltSoak, Soak)
+{
+  const plInt32 iSeconds = opt_JoltSoakSeconds.GetOptionValue(plCommandLineOption::LogMode::Never);
+  if (iSeconds <= 0)
+    return;
+
+  plTestFramework::Output(plTestOutput::Message, "running the soak scene for %i s", iSeconds);
+
+  IgnoreRagdollErrors filter;
+  IgnoreRagdollErrorsScope filterScope(&filter);
 
   StressScene scene;
   plStopwatch watch;
 
-  while (watch.GetRunningTotal().GetSeconds() < fSeconds)
+  while (watch.GetRunningTotal().GetSeconds() < iSeconds)
     scene.Frame();
 
   Check(true, "the soak scene finished without an assert or crash");
-  return scene.GetFrame();
+  plTestFramework::Output(plTestOutput::Message, "soak scene: %llu frames", static_cast<unsigned long long>(scene.GetFrame()));
 }
