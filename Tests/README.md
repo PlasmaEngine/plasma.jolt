@@ -77,6 +77,13 @@ it to a regular `Check` when the fix lands. New tests use `PL_CREATE_SIMPLE_TEST
 
 ## CI
 
-The engine repository's "Build and test" workflow runs `JoltTest` on Windows and Linux through
-`Utilities/Scripts/RunPackageTests.ps1`, at the plasma.jolt revision pinned in `Utilities/Scripts/TestPackages.json`. Bump that pin
-when this directory changes. `.github/workflows/jolt-tests.yml` is a manual workflow for a self-hosted runner and the long soak.
+The engine repository's "Build and test" workflow builds `JoltTest` and runs it on Windows and Linux through
+`Utilities/Scripts/RunUnitTests.ps1 -PackageTests JoltTest`, at the plasma.jolt revision pinned in `Utilities/Scripts/TestPackages.json`.
+Bump that pin when this directory changes. To run exactly what CI runs, from the engine checkout:
+
+```powershell
+./Utilities/Scripts/PrepareTestPackages.ps1 -Purpose Tests -SourcesDirectory $env:TEMP/PlasmaTestPackages
+./Utilities/Scripts/RunUnitTests.ps1 -PackageTests JoltTest -PackageSourcesDirectory $env:TEMP/PlasmaTestPackages -OutputDirectory Output/UnitTests
+```
+
+`.github/workflows/jolt-tests.yml` is a manual workflow for a self-hosted runner and the long soak.
