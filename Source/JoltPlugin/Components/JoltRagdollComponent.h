@@ -3,7 +3,9 @@
 #include <Core/ResourceManager/ResourceHandle.h>
 #include <Core/World/ComponentManager.h>
 #include <Foundation/Math/Declarations.h>
+#include <JoltPlugin/Components/JoltRagdollController.h>
 #include <JoltPlugin/JoltPluginDLL.h>
+#include <JoltPlugin/Resources/JoltRagdollProfileResource.h>
 #include <RendererCore/AnimationSystem/Declarations.h>
 
 class plJoltUserData;
@@ -36,12 +38,23 @@ public:
 
   void DriveAnimatedRagdolls(plTime deltaTime);
 
+  /// \brief Runs every active ragdoll controller for one collision step. Called from the physics step listener.
+  void StepActiveRagdolls(float fDeltaTime);
+
+  /// \brief Time spent in the active ragdoll controllers (prepare, steps, events) since the last reset. For profiling and tests.
+  plTime GetControlTime() const { return m_ControlTime; }
+  void ResetControlTime() { m_ControlTime = plTime::MakeZero(); }
+
 private:
   friend class plJoltWorldModule;
   friend class plJoltRagdollComponent;
 
   plMutex m_SkeletonsMutex;
   plDynamicArray<plUniquePtr<JPH::SkeletonPose>> m_FreeSkeletonPoses;
+
+  /// Ragdolls with a controller. Only changed on the main thread while no simulate task runs.
+  plDynamicArray<plJoltRagdollComponent*> m_ControlledRagdolls;
+  plTime m_ControlTime;
 
   void Update(const plWorldModule::UpdateContext& context);
 };
@@ -72,6 +85,7 @@ struct plJoltRagdollAnimMode
     Limp,       ///< The ragdoll just falls to the ground.
     Powered,    ///< The ragdoll joints are powered by incoming animation poses.
     Controlled, ///< The ragdoll is fully controlled by incoming animation poses (kinematic).
+    Active,     ///< Needs a profile. The animation pose is the target, balance corrects it, and hits take the body over region by region.
 
     Default = Limp
   };
@@ -195,9 +209,76 @@ public:
   void OnRetrieveBoneState(plMsgRetrieveBoneState& ref_msg) const;          // [ msg handler ]
   void OnMsgAnimationPoseGeneration(plMsgInjectPoseCommands& ref_msg); // [ msg handler ]
 
+  /// \brief Global multiplier on top of the profile's muscles (100 = as authored). Without a profile it is the motor torque limit, as before.
   void SetJointMotorStrength(float fStrength);                              // [ scriptable ]
   float GetJointMotorStrength() const;                                      // [ scriptable ]
   void FadeJointMotorStrength(float fTargetStrength, plTime duration);      // [ scriptable ]
+
+  //////////////////////////////////////////////////////////////////////////
+  // Active ragdoll
+
+  /// \brief The ragdoll profile with the muscle values and behaviour tuning. Without a profile the ragdoll behaves as before.
+  void SetProfileFile(const char* szFile); // [ property ]
+  const char* GetProfileFile() const;      // [ property ]
+  void SetProfile(const plJoltRagdollProfileResourceHandle& hProfile);
+  const plJoltRagdollProfileResourceHandle& GetProfile() const { return m_hProfile; }
+
+  /// \brief 0..1. Scales every behaviour except damping, soft limits, neutral pose and impact spin.
+  void SetConsciousness(float fConsciousness);                        // [ property ] [ scriptable ]
+  float GetConsciousness() const { return m_fConsciousness; }         // [ property ] [ scriptable ]
+  void FadeConsciousness(float fTargetConsciousness, plTime duration); // [ scriptable ]
+
+  /// \brief Switches one behaviour by name: NeutralPose, ImpactSpin, FallPose, ProtectFace, RollGuard, Injury, Balance.
+  void SetBehaviourEnabled(const char* szBehaviour, bool bEnabled); // [ scriptable ]
+  bool IsBehaviourEnabled(const char* szBehaviour) const;          // [ scriptable ]
+
+  /// \brief Restores every dislocated joint, e.g. before a pooled NPC is reused.
+  void ResetInjuries(); // [ scriptable ]
+
+  /// \brief Applies an impulse (N·s, world space) to the body closest to the position. With a profile this also counts as a hit:
+  /// it spins the limbs and, in the Active anim mode, starts the takeover.
+  void ApplyImpulse(const plVec3& vPosition, const plVec3& vImpulse); // [ scriptable ]
+
+  /// \brief What the balance layer does. Only meaningful in the Active anim mode.
+  plJoltRagdollBalanceState::Enum GetBalanceState() const; // [ scriptable ]
+
+  /// \brief Number of joints that are dislocated right now.
+  plUInt32 GetDislocatedJointCount() const; // [ scriptable ]
+
+  /// \brief The controller of the active ragdoll, nullptr without a profile or before the ragdoll exists. For tests and tools.
+  const plJoltRagdollController* GetController() const { return m_pController.Borrow(); }
+
+  bool GetNeutralPose() const { return m_Behaviours.IsSet(plJoltRagdollBehaviour::NeutralPose); }      // [ property ]
+  void SetNeutralPose(bool b) { m_Behaviours.AddOrRemove(plJoltRagdollBehaviour::NeutralPose, b); }    // [ property ]
+  bool GetImpactSpin() const { return m_Behaviours.IsSet(plJoltRagdollBehaviour::ImpactSpin); }        // [ property ]
+  void SetImpactSpin(bool b) { m_Behaviours.AddOrRemove(plJoltRagdollBehaviour::ImpactSpin, b); }      // [ property ]
+  bool GetFallPose() const { return m_Behaviours.IsSet(plJoltRagdollBehaviour::FallPose); }            // [ property ]
+  void SetFallPose(bool b) { m_Behaviours.AddOrRemove(plJoltRagdollBehaviour::FallPose, b); }          // [ property ]
+  bool GetProtectFace() const { return m_Behaviours.IsSet(plJoltRagdollBehaviour::ProtectFace); }      // [ property ]
+  void SetProtectFace(bool b) { m_Behaviours.AddOrRemove(plJoltRagdollBehaviour::ProtectFace, b); }    // [ property ]
+  bool GetRollGuard() const { return m_Behaviours.IsSet(plJoltRagdollBehaviour::RollGuard); }          // [ property ]
+  void SetRollGuard(bool b) { m_Behaviours.AddOrRemove(plJoltRagdollBehaviour::RollGuard, b); }        // [ property ]
+  bool GetInjury() const { return m_Behaviours.IsSet(plJoltRagdollBehaviour::Injury); }                // [ property ]
+  void SetInjury(bool b) { m_Behaviours.AddOrRemove(plJoltRagdollBehaviour::Injury, b); }              // [ property ]
+  bool GetBalance() const { return m_Behaviours.IsSet(plJoltRagdollBehaviour::Balance); }              // [ property ]
+  void SetBalance(bool b) { m_Behaviours.AddOrRemove(plJoltRagdollBehaviour::Balance, b); }            // [ property ]
+
+protected:
+  friend class plJoltRagdollComponentManager;
+
+  void PrepareControl(plTime frameTime);
+  void FinishControl();
+  void CreateController(const plSkeletonResource& skeletonResource);
+  void DestroyController();
+  bool UsesController() const { return m_pController != nullptr; }
+
+  plJoltRagdollProfileResourceHandle m_hProfile;
+  plUInt32 m_uiProfileContentVersion = 0;
+  plUniquePtr<plJoltRagdollController> m_pController;
+  plBitflags<plJoltRagdollBehaviour> m_Behaviours;
+  float m_fConsciousness = 1.0f;
+  float m_fConsciousnessTarget = 1.0f;
+  plTime m_ConsciousnessFadeDuration = plTime::MakeZero();
 
 protected:
   plEnum<plJoltRagdollStartMode> m_StartMode;                               // [ property ]

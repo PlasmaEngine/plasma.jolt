@@ -97,6 +97,22 @@ void OnLoadPlugin()
     }
   }
 
+  // Ragdoll Profile
+  {
+    plActionMapManager::RegisterActionMap("JoltRagdollProfileAssetMenuBar").IgnoreResult();
+    plStandardMenus::MapActions("JoltRagdollProfileAssetMenuBar", plStandardMenuTypes::Default | plStandardMenuTypes::Edit);
+    plProjectActions::MapActions("JoltRagdollProfileAssetMenuBar");
+    plDocumentActions::MapMenuActions("JoltRagdollProfileAssetMenuBar");
+    plAssetActions::MapMenuActions("JoltRagdollProfileAssetMenuBar");
+    plCommandHistoryActions::MapActions("JoltRagdollProfileAssetMenuBar");
+    plEditActions::MapActions("JoltRagdollProfileAssetMenuBar", false, false);
+
+    plActionMapManager::RegisterActionMap("JoltRagdollProfileAssetToolBar").IgnoreResult();
+    plDocumentActions::MapToolbarActions("JoltRagdollProfileAssetToolBar");
+    plCommandHistoryActions::MapActions("JoltRagdollProfileAssetToolBar", "");
+    plAssetActions::MapToolBarActions("JoltRagdollProfileAssetToolBar", true);
+  }
+
   // Destructible Mesh
   {
     // Menu Bar
@@ -315,6 +331,18 @@ void plRagdollComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& 
     return;
 
   plJoltWeightComponent_PropertyMetaStateEventHandler(e);
+
+  // the active ragdoll settings only mean something with a profile; the profile replaces the stiffness factor
+  auto& props = *e.m_pPropertyStates;
+  const bool bProfile = !e.m_pObject->GetTypeAccessor().GetValue("Profile").ConvertTo<plString>().IsEmpty();
+
+  for (const char* szProperty : {"Consciousness", "NeutralPose", "ImpactSpin", "FallPose", "ProtectFace", "RollGuard", "Injury", "Balance"})
+  {
+    props[szProperty].m_Visibility = bProfile ? plPropertyUiState::Default : plPropertyUiState::Invisible;
+  }
+
+  if (bProfile)
+    props["StiffnessFactor"].m_Visibility = plPropertyUiState::Invisible;
 }
 
 void plCharacterControllerComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& e)

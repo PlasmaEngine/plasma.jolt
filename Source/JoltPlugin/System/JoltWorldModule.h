@@ -322,6 +322,7 @@ private:
   void* m_pContactListener = nullptr;
   void* m_pSoftBodyContactListener = nullptr;
   void* m_pActivationListener = nullptr;
+  void* m_pRagdollStepListener = nullptr;
   plSet<plJoltDynamicActorComponent*> m_ActiveActors;
   plMap<plJoltRopeComponent*, plInt32> m_ActiveRopes;
   plMap<plJoltRagdollComponent*, plInt32> m_ActiveRagdolls;

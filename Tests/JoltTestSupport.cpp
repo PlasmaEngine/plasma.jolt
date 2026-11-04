@@ -23,6 +23,11 @@ namespace JoltTest
       ++s_Totals.m_uiOpenR1Items;
       std::printf("OPEN R1: %s: %s\n", s_szGroup, szMessage);
     }
+    else if (category == Category::PlanGate)
+    {
+      ++s_Totals.m_uiOpenPlanGates;
+      std::printf("OPEN GATE: %s: %s\n", s_szGroup, szMessage);
+    }
     else
     {
       ++s_Totals.m_uiFailures;
@@ -40,6 +45,11 @@ namespace JoltTest
     Check(bOk, szMessage, category);
   }
 
+  void Report(const char* szMetric, float fValue, const char* szUnit)
+  {
+    std::printf("  %s: %.3f%s\n", szMetric, fValue, szUnit);
+  }
+
   const Totals& GetTotals()
   {
     return s_Totals;
@@ -49,6 +59,9 @@ namespace JoltTest
     : m_fFrameRate(fFrameRate)
   {
     plWorldDesc desc("JoltTests");
+    // a fixed seed: 0 would seed from the clock, and everything drawn from the world's random numbers (e.g. the ragdoll's
+    // per-character variation) would differ from run to run
+    desc.m_uiRandomNumberGeneratorSeed = 0x5EED;
     m_pWorld = PL_DEFAULT_NEW(plWorld, desc);
 
     PL_LOCK(m_pWorld->GetWriteMarker());

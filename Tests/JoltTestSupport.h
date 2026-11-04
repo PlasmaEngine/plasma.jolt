@@ -21,6 +21,8 @@ namespace JoltTest
     Regression,
     /// Describes behaviour that an R1 fix is supposed to deliver. A failure is reported as an open item and only fails the run with --strict.
     R1Gate,
+    /// An exit threshold from a feature plan (e.g. the active ragdoll's RD phases). A miss is reported as an open gate and only fails the run with --strict.
+    PlanGate,
   };
 
   /// \brief Records one check. Prints a line for every failure.
@@ -37,7 +39,11 @@ namespace JoltTest
     plUInt32 m_uiChecks = 0;
     plUInt32 m_uiFailures = 0;
     plUInt32 m_uiOpenR1Items = 0;
+    plUInt32 m_uiOpenPlanGates = 0;
   };
+
+  /// \brief Prints a measured value, so plan gates show their numbers whether they pass or not.
+  void Report(const char* szMetric, float fValue, const char* szUnit = "");
 
   const Totals& GetTotals();
 
@@ -104,6 +110,11 @@ void RunBreakTests();
 void RunBuoyancyTests();
 void RunCharacterTests();
 void RunLifecycleTests();
+void RunRagdollTests();
+
+/// \brief Simulates the active ragdoll scenarios and writes every body's motion to text files in the given folder, for
+/// rendering videos. With a filter only the scenarios whose file name starts with it are recorded. Checks nothing.
+void RunRagdollRecordings(const char* szFolder, const char* szFilter);
 
 /// \brief Runs the soak scene for the given amount of wall-clock seconds. Returns the number of simulated frames.
 plUInt64 RunStressScene(double fSeconds);

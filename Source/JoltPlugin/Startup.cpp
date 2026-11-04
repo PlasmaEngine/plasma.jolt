@@ -3,6 +3,7 @@
 #include <Foundation/Configuration/Startup.h>
 #include <JoltPlugin/Resources/JoltDestructibleMeshResource.h>
 #include <JoltPlugin/Resources/JoltMeshResource.h>
+#include <JoltPlugin/Resources/JoltRagdollProfileResource.h>
 #include <JoltPlugin/System/JoltCore.h>
 
 // clang-format off
@@ -19,6 +20,7 @@ PL_BEGIN_SUBSYSTEM_DECLARATION(Jolt, JoltPlugin)
     plResourceManager::RegisterResourceForAssetType("Jolt_Colmesh_Convex", plGetStaticRTTI<plJoltMeshResource>());
 
     plResourceManager::RegisterResourceForAssetType("DestructibleMesh", plGetStaticRTTI<plJoltDestructibleMeshResource>());
+    plResourceManager::RegisterResourceForAssetType("Jolt_RagdollProfile", plGetStaticRTTI<plJoltRagdollProfileResource>());
 
     plJoltMeshResourceDescriptor desc;
     plJoltMeshResourceHandle hResource = plResourceManager::CreateResource<plJoltMeshResource>("Missing Jolt Mesh", std::move(desc), "Empty collision mesh");
