@@ -93,8 +93,8 @@ public static class PlasmaPackageSdk
 
         rules.PublicDefinitions.Add("BUILDSYSTEM_COMPILE_ENGINE_AS_DLL");
         rules.PublicDefinitions.Add("BUILDSYSTEM_SDKVERSION_MAJOR=0");
-        rules.PublicDefinitions.Add("BUILDSYSTEM_SDKVERSION_MINOR=11");
-        rules.PublicDefinitions.Add("BUILDSYSTEM_SDKVERSION_PATCH=2");
+        rules.PublicDefinitions.Add("BUILDSYSTEM_SDKVERSION_MINOR=12");
+        rules.PublicDefinitions.Add("BUILDSYSTEM_SDKVERSION_PATCH=0");
         rules.PublicDefinitions.Add("UNICODE");
         rules.PublicDefinitions.Add("_UNICODE");
 
@@ -249,16 +249,21 @@ public static class PlasmaPackageSdk
         {
             rules.PrivateLibraries.Add(Path.Combine(PackageBinaryDirectory(context), outputName + ".lib"));
         }
+        else if (context.Platform == TargetPlatform.Mac)
+        {
+            // ld64 resolves every symbol at link time, so the sibling package's dylib is linked too
+            rules.PrivateLibraries.Add(Path.Combine(PackageBinaryDirectory(context), outputName + ".dylib"));
+        }
         else
         {
-            AddSharedObject(rules, Path.Combine(PackageBinaryDirectory(context), outputName + ".so"));
+            AddSharedObject(rules, Path.Combine(PackageBinaryDirectory(context), outputName + (context.Platform == TargetPlatform.Mac ? ".dylib" : ".so")));
         }
     }
 
     public static void AddImportLibrary(ModuleRules rules, BuildContext context, string outputName)
     {
         var library = Path.Combine(SdkBinaryDirectory(context),
-            outputName + (context.Platform == TargetPlatform.Windows ? ".lib" : ".so"));
+            outputName + (context.Platform == TargetPlatform.Windows ? ".lib" : context.Platform == TargetPlatform.Mac ? ".dylib" : ".so"));
 
         if (!File.Exists(library))
         {
@@ -279,6 +284,13 @@ public static class PlasmaPackageSdk
     /// would record that build-machine path as the dependency; -l: records only the name the device loader resolves.
     private static void AddSharedObject(ModuleRules rules, string library)
     {
+        // ld64 has no -l:; a dylib records its @rpath install name, not this path, so it links by full path
+        if (library.EndsWith(".dylib", StringComparison.OrdinalIgnoreCase))
+        {
+            rules.PublicLibraries.Add(library);
+            return;
+        }
+
         rules.AdditionalLinkerFlags.Add($"-L\"{Path.GetDirectoryName(library)}\"");
         rules.AdditionalLinkerFlags.Add($"-l:{Path.GetFileName(library)}");
     }
