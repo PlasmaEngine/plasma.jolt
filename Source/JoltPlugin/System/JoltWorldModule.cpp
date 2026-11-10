@@ -8,6 +8,7 @@
 #include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/MeshShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/PhysicsStepListener.h>
 #include <JoltPlugin/Actors/JoltDynamicActorComponent.h>
 #include <JoltPlugin/Actors/JoltHeightfieldColliderComponent.h>
 #include <JoltPlugin/Actors/JoltTriangleMeshColliderComponent.h>
@@ -189,6 +190,23 @@ public:
   plDynamicArray<plComponentHandle>* m_pDestructiblesPutToSleep = nullptr;
 };
 
+/// Runs the active ragdoll controllers before every collision step, so muscle targets, damping and soft limits are recomputed
+/// per substep instead of once per frame. Jolt holds all body and constraint locks while this runs.
+class plJoltRagdollStepListener : public JPH::PhysicsStepListener
+{
+public:
+  virtual void OnStep(const JPH::PhysicsStepListenerContext& context) override
+  {
+    if (m_pManager != nullptr)
+    {
+      PL_PROFILE_SCOPE("ActiveRagdolls");
+      m_pManager->StepActiveRagdolls(context.mDeltaTime);
+    }
+  }
+
+  plJoltRagdollComponentManager* m_pManager = nullptr; ///< set before every simulate task
+};
+
 class plJoltGroupFilter : public JPH::GroupFilter
 {
 public:
@@ -229,6 +247,10 @@ void plJoltWorldModule::Deinitialize()
   plJoltSoftBodyContactListener* pSoftBodyContactListener = reinterpret_cast<plJoltSoftBodyContactListener*>(m_pSoftBodyContactListener);
   PL_DEFAULT_DELETE(pSoftBodyContactListener);
   m_pSoftBodyContactListener = nullptr;
+
+  plJoltRagdollStepListener* pRagdollStepListener = reinterpret_cast<plJoltRagdollStepListener*>(m_pRagdollStepListener);
+  PL_DEFAULT_DELETE(pRagdollStepListener);
+  m_pRagdollStepListener = nullptr;
 
   m_pGroupFilter->Release();
   m_pGroupFilter = nullptr;
@@ -286,6 +308,12 @@ void plJoltWorldModule::Initialize()
     plJoltSoftBodyContactListener* pListener = PL_DEFAULT_NEW(plJoltSoftBodyContactListener);
     m_pSoftBodyContactListener = pListener;
     m_pSystem->SetSoftBodyContactListener(pListener);
+  }
+
+  {
+    plJoltRagdollStepListener* pListener = PL_DEFAULT_NEW(plJoltRagdollStepListener);
+    m_pRagdollStepListener = pListener;
+    m_pSystem->AddStepListener(pListener);
   }
 
   {
@@ -788,9 +816,14 @@ void plJoltWorldModule::StartSimulation(const plWorldModule::UpdateContext& cont
     pTriggerManager->UpdateMovingTriggers();
   }
 
-  if (plJoltRagdollComponentManager* pRagdollManager = GetWorld()->GetComponentManager<plJoltRagdollComponentManager>())
   {
-    pRagdollManager->DriveAnimatedRagdolls(m_SimulatedTimeStep);
+    plJoltRagdollComponentManager* pRagdollManager = GetWorld()->GetComponentManager<plJoltRagdollComponentManager>();
+    reinterpret_cast<plJoltRagdollStepListener*>(m_pRagdollStepListener)->m_pManager = pRagdollManager;
+
+    if (pRagdollManager)
+    {
+      pRagdollManager->DriveAnimatedRagdolls(m_SimulatedTimeStep);
+    }
   }
 
   ApplyImpulses();

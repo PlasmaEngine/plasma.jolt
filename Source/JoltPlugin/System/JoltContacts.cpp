@@ -5,6 +5,7 @@
 #include <Foundation/Configuration/CVar.h>
 #include <JoltPlugin/Actors/JoltDynamicActorComponent.h>
 #include <JoltPlugin/Actors/JoltTriggerComponent.h>
+#include <JoltPlugin/Components/JoltRagdollComponent.h>
 #include <JoltPlugin/Resources/JoltMaterial.h>
 #include <JoltPlugin/System/JoltContacts.h>
 #include <JoltPlugin/System/JoltDebugRenderer.h>
@@ -105,6 +106,35 @@ void plJoltContactListener::OnContact(const JPH::Body& body0, const JPH::Body& b
     {
       fRes1 = pMat1->m_fRestitution;
       fFri1 = pMat1->m_fFriction;
+    }
+
+    // Ragdoll bodies use their body friction as a multiplier on the material (1 by default), so an active ragdoll can grip
+    // harder for a moment, e.g. while it stops itself rolling down a slope. Active ragdolls also learn which of their bodies
+    // touch something, which is how they sense the ground.
+    const bool bRagdoll0 = plJoltUserData::GetType(reinterpret_cast<const void*>(body0.GetUserData())) == plJoltUserData::Type::RagdollComponent;
+    const bool bRagdoll1 = plJoltUserData::GetType(reinterpret_cast<const void*>(body1.GetUserData())) == plJoltUserData::Type::RagdollComponent;
+    const bool bSameRagdoll = bRagdoll0 && bRagdoll1 && body0.GetUserData() == body1.GetUserData();
+
+    auto ReportRagdollContact = [&](const JPH::Body& body)
+    {
+      if (bSameRagdoll)
+        return;
+      if (const plJoltRagdollComponent* pRagdoll = static_cast<const plJoltRagdollComponent*>(plJoltUserData::GetComponent(reinterpret_cast<const void*>(body.GetUserData()))))
+      {
+        if (const plJoltRagdollController* pController = pRagdoll->GetController())
+          pController->ReportContact(body.GetID());
+      }
+    };
+
+    if (bRagdoll0)
+    {
+      fFri0 *= body0.GetFriction();
+      ReportRagdollContact(body0);
+    }
+    if (bRagdoll1)
+    {
+      fFri1 *= body1.GetFriction();
+      ReportRagdollContact(body1);
     }
 
     ref_settings.mCombinedRestitution = plMath::Max(fRes0, fRes1);

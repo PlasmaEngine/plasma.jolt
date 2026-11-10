@@ -2,6 +2,7 @@
 
 #include <Core/Interfaces/PhysicsWorldModule.h>
 #include <Core/Physics/SurfaceResource.h>
+#include <Foundation/Configuration/CVar.h>
 #include <Core/WorldSerializer/WorldReader.h>
 #include <Core/WorldSerializer/WorldWriter.h>
 #include <GameEngine/Animation/Skeletal/AnimatedMeshComponent.h>
@@ -40,24 +41,35 @@ PL_BEGIN_STATIC_REFLECTED_ENUM(plJoltRagdollStartMode, 1)
   PL_ENUM_CONSTANTS(plJoltRagdollStartMode::WithBindPose, plJoltRagdollStartMode::WithNextAnimPose, plJoltRagdollStartMode::WithCurrentMeshPose)
 PL_END_STATIC_REFLECTED_ENUM;
 
-PL_BEGIN_STATIC_REFLECTED_ENUM(plJoltRagdollAnimMode, 1)
-  PL_ENUM_CONSTANTS(plJoltRagdollAnimMode::Off, plJoltRagdollAnimMode::Limp, plJoltRagdollAnimMode::Powered, plJoltRagdollAnimMode::Controlled)
+PL_BEGIN_STATIC_REFLECTED_ENUM(plJoltRagdollAnimMode, 2)
+  PL_ENUM_CONSTANTS(plJoltRagdollAnimMode::Off, plJoltRagdollAnimMode::Limp, plJoltRagdollAnimMode::Powered, plJoltRagdollAnimMode::Controlled, plJoltRagdollAnimMode::Active)
 PL_END_STATIC_REFLECTED_ENUM;
 // clang-format on
 
+plCVarInt cvar_JoltRagdollDebug("Jolt.Ragdoll.Debug", 0, plCVarFlags::None, "Active ragdoll overlay. 1 = muscle effort, soft zones, centre of mass, capture point and the active behaviour. 2 = also the behaviour timeline of the first ragdoll.");
+
 // clang-format off
-PL_BEGIN_COMPONENT_TYPE(plJoltRagdollComponent, 5, plComponentMode::Dynamic)
+PL_BEGIN_COMPONENT_TYPE(plJoltRagdollComponent, 6, plComponentMode::Dynamic)
 {
   PL_BEGIN_PROPERTIES
   {
     PL_MEMBER_PROPERTY("SelfCollision", m_bSelfCollision),
     PL_ENUM_ACCESSOR_PROPERTY("StartMode", plJoltRagdollStartMode, GetStartMode, SetStartMode),
     PL_ENUM_ACCESSOR_PROPERTY("AnimMode", plJoltRagdollAnimMode, GetAnimMode, SetAnimMode),
+    PL_ACCESSOR_PROPERTY("Profile", GetProfileFile, SetProfileFile)->AddAttributes(new plAssetBrowserAttribute("CompatibleAsset_Jolt_RagdollProfile")),
+    PL_ACCESSOR_PROPERTY("Consciousness", GetConsciousness, SetConsciousness)->AddAttributes(new plDefaultValueAttribute(1.0f), new plClampValueAttribute(0.0f, 1.0f)),
+    PL_ACCESSOR_PROPERTY("NeutralPose", GetNeutralPose, SetNeutralPose)->AddAttributes(new plDefaultValueAttribute(true), new plGroupAttribute("Behaviours")),
+    PL_ACCESSOR_PROPERTY("ImpactSpin", GetImpactSpin, SetImpactSpin)->AddAttributes(new plDefaultValueAttribute(true)),
+    PL_ACCESSOR_PROPERTY("FallPose", GetFallPose, SetFallPose)->AddAttributes(new plDefaultValueAttribute(true)),
+    PL_ACCESSOR_PROPERTY("ProtectFace", GetProtectFace, SetProtectFace)->AddAttributes(new plDefaultValueAttribute(true)),
+    PL_ACCESSOR_PROPERTY("RollGuard", GetRollGuard, SetRollGuard)->AddAttributes(new plDefaultValueAttribute(true)),
+    PL_ACCESSOR_PROPERTY("Injury", GetInjury, SetInjury)->AddAttributes(new plDefaultValueAttribute(false)),
+    PL_ACCESSOR_PROPERTY("Balance", GetBalance, SetBalance)->AddAttributes(new plDefaultValueAttribute(true)),
     PL_ACCESSOR_PROPERTY("GravityFactor", GetGravityFactor, SetGravityFactor)->AddAttributes(new plDefaultValueAttribute(1.0f)),
     PL_MEMBER_PROPERTY("WeightCategory", m_uiWeightCategory)->AddAttributes(new plDynamicEnumAttribute("PhysicsWeightCategory")),
     PL_ACCESSOR_PROPERTY("WeightScale", GetWeight_Scale, SetWeight_Scale)->AddAttributes(new plDefaultValueAttribute(1.0f), new plClampValueAttribute(0.1f, 10.0f)),
     PL_ACCESSOR_PROPERTY("Mass", GetWeight_Mass, SetWeight_Mass)->AddAttributes(new plSuffixAttribute(" kg"), new plDefaultValueAttribute(50.0f), new plClampValueAttribute(1.0f, 1000.0f)),
-    PL_MEMBER_PROPERTY("StiffnessFactor", m_fStiffnessFactor)->AddAttributes(new plDefaultValueAttribute(1.0f)),
+    PL_MEMBER_PROPERTY("StiffnessFactor", m_fStiffnessFactor)->AddAttributes(new plDefaultValueAttribute(1.0f), new plGroupAttribute("Physics")),
     PL_MEMBER_PROPERTY("OwnerVelocityScale", m_fOwnerVelocityScale)->AddAttributes(new plDefaultValueAttribute(1.0f)),
     PL_MEMBER_PROPERTY("CenterPosition", m_vCenterPosition),
     PL_MEMBER_PROPERTY("CenterVelocity", m_fCenterVelocity)->AddAttributes(new plDefaultValueAttribute(0.0f)),
@@ -86,6 +98,14 @@ PL_BEGIN_COMPONENT_TYPE(plJoltRagdollComponent, 5, plComponentMode::Dynamic)
     PL_SCRIPT_FUNCTION_PROPERTY(SetJointMotorStrength, In, "fStrength"),
     PL_SCRIPT_FUNCTION_PROPERTY(GetJointMotorStrength),
     PL_SCRIPT_FUNCTION_PROPERTY(FadeJointMotorStrength, In, "fTargetStrength", In, "tDuration"),
+    PL_SCRIPT_FUNCTION_PROPERTY(SetConsciousness, In, "fConsciousness"),
+    PL_SCRIPT_FUNCTION_PROPERTY(GetConsciousness),
+    PL_SCRIPT_FUNCTION_PROPERTY(FadeConsciousness, In, "fTargetConsciousness", In, "tDuration"),
+    PL_SCRIPT_FUNCTION_PROPERTY(SetBehaviourEnabled, In, "sBehaviour", In, "bEnabled"),
+    PL_SCRIPT_FUNCTION_PROPERTY(IsBehaviourEnabled, In, "sBehaviour"),
+    PL_SCRIPT_FUNCTION_PROPERTY(ResetInjuries),
+    PL_SCRIPT_FUNCTION_PROPERTY(ApplyImpulse, In, "vWorldPosition", In, "vWorldImpulse"),
+    PL_SCRIPT_FUNCTION_PROPERTY(GetDislocatedJointCount),
   }
   PL_END_FUNCTIONS;
 }
@@ -129,6 +149,16 @@ void plJoltRagdollComponentManager::Update(const plWorldModule::UpdateContext& c
       it->CreatePendingLimbs();
   }
 
+  // events and dislocations of the steps that just ran; the simulate task has been joined by now
+  {
+    const plTime tStart = plTime::Now();
+    for (plUInt32 i = 0; i < m_ControlledRagdolls.GetCount(); ++i)
+    {
+      m_ControlledRagdolls[i]->FinishControl();
+    }
+    m_ControlTime += plTime::Now() - tStart;
+  }
+
   for (auto it : pModule->GetActiveRagdolls())
   {
     plJoltRagdollComponent* pComponent = it.Key();
@@ -152,15 +182,40 @@ void plJoltRagdollComponentManager::DriveAnimatedRagdolls(plTime deltaTime)
 
   for (auto it = GetComponents(0); it.IsValid(); it.Next())
   {
-    it->DriveAnimated(deltaTime);
+    if (it->UsesController())
+    {
+      const plTime tStart = plTime::Now();
+      it->PrepareControl(deltaTime);
+      m_ControlTime += plTime::Now() - tStart;
+    }
+    else
+    {
+      it->DriveAnimated(deltaTime);
+    }
   }
+}
+
+void plJoltRagdollComponentManager::StepActiveRagdolls(float fDeltaTime)
+{
+  const plTime tStart = plTime::Now();
+
+  for (plJoltRagdollComponent* pRagdoll : m_ControlledRagdolls)
+  {
+    pRagdoll->m_pController->Step(fDeltaTime);
+  }
+
+  m_ControlTime += plTime::Now() - tStart;
 }
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////
 
-plJoltRagdollComponent::plJoltRagdollComponent() = default;
+plJoltRagdollComponent::plJoltRagdollComponent()
+{
+  m_Behaviours = plJoltRagdollBehaviour::Default;
+}
+
 plJoltRagdollComponent::~plJoltRagdollComponent() = default;
 
 void plJoltRagdollComponent::SerializeComponent(plWorldWriter& inout_stream) const
@@ -181,6 +236,11 @@ void plJoltRagdollComponent::SerializeComponent(plWorldWriter& inout_stream) con
   s << (float)m_fWeightMass;
   s << m_fStiffnessFactor;
   s << m_AnimMode;
+
+  // version 6: active ragdoll
+  s << m_hProfile;
+  s << m_fConsciousness;
+  s << m_Behaviours.GetValue();
 }
 
 void plJoltRagdollComponent::DeserializeComponent(plWorldReader& inout_stream)
@@ -217,6 +277,17 @@ void plJoltRagdollComponent::DeserializeComponent(plWorldReader& inout_stream)
   if (uiVersion >= 5)
   {
     s >> m_AnimMode;
+  }
+
+  if (uiVersion >= 6)
+  {
+    s >> m_hProfile;
+    s >> m_fConsciousness;
+    m_fConsciousnessTarget = m_fConsciousness;
+
+    plJoltRagdollBehaviour::StorageType uiBehaviours = 0;
+    s >> uiBehaviours;
+    m_Behaviours.SetValue(uiBehaviours);
   }
 }
 
@@ -255,7 +326,7 @@ void plJoltRagdollComponent::Update(bool bForce)
   if (!HasCreatedLimbs())
     return;
 
-  if (m_AnimMode != plJoltRagdollAnimMode::Powered && m_bIsPowered)
+  if (m_AnimMode != plJoltRagdollAnimMode::Powered && m_AnimMode != plJoltRagdollAnimMode::Active && m_bIsPowered)
   {
     ResetJointMotors();
   }
@@ -282,7 +353,8 @@ void plJoltRagdollComponent::Update(bool bForce)
     }
   }
 
-  if (m_pSkeletonPose && (m_AnimMode != plJoltRagdollAnimMode::Controlled) && (m_AnimMode != plJoltRagdollAnimMode::Powered || m_fMotorStrength <= 0.0f))
+  const bool bPowered = m_AnimMode == plJoltRagdollAnimMode::Powered || m_AnimMode == plJoltRagdollAnimMode::Active;
+  if (m_pSkeletonPose && (m_AnimMode != plJoltRagdollAnimMode::Controlled) && (!bPowered || m_fMotorStrength <= 0.0f))
   {
     auto pMan = static_cast<plJoltRagdollComponentManager*>(GetOwningManager());
 
@@ -334,8 +406,9 @@ void plJoltRagdollComponent::DriveAnimated(plTime deltaTime)
     {
       m_pRagdoll->DriveToPoseUsingKinematics(*m_pSkeletonPose, deltaTime.AsFloatInSeconds());
     }
-    else if (m_AnimMode == plJoltRagdollAnimMode::Powered && m_fMotorStrength > 0.0f)
+    else if ((m_AnimMode == plJoltRagdollAnimMode::Powered || m_AnimMode == plJoltRagdollAnimMode::Active) && m_fMotorStrength > 0.0f)
     {
+      // without a profile, Active behaves like Powered
       m_bIsPowered = true;
       m_pRagdoll->DriveToPoseUsingMotors(*m_pSkeletonPose);
     }
@@ -436,6 +509,8 @@ void plJoltRagdollComponent::CreateLimbsFromCurrentMeshPose()
 void plJoltRagdollComponent::DestroyAllLimbs()
 {
   m_bPendingPose = false;
+  DestroyController();
+
   if (m_pRagdoll)
   {
     m_pRagdoll->RemoveFromPhysicsSystem();
@@ -531,6 +606,10 @@ void plJoltRagdollComponent::OnMsgPhysicsAddImpulse(plMsgPhysicsAddImpulse& ref_
     if (bodyId.GetIndexAndSequenceNumber() == uiBodyId)
     {
       GetWorld()->GetModule<plJoltWorldModule>()->AddImpulse(uiBodyId, ref_msg.m_vImpulse * fImpulse, ref_msg.m_vGlobalPosition);
+
+      if (m_pController)
+        m_pController->AddHit(ref_msg.m_vImpulse * fImpulse, ref_msg.m_vGlobalPosition);
+
       return;
     }
   }
@@ -731,14 +810,17 @@ void plJoltRagdollComponent::OnMsgAnimationPoseGeneration(plMsgInjectPoseCommand
 
 void plJoltRagdollComponent::SetJointMotorStrength(float fStrength)
 {
-  if (m_fMotorStrength != fStrength)
-  {
-    ApplyJointMotorStrength(fStrength);
-  }
+  const bool bChanged = m_fMotorStrength != fStrength;
 
   m_fMotorStrength = fStrength;
   m_fMotorTargetStrength = fStrength;
   m_MotorLerpDuration = plTime::MakeZero();
+
+  // assign first: ApplyJointMotorStrength() used to read the member before it was updated, so the old strength was applied
+  if (bChanged)
+  {
+    ApplyJointMotorStrength(fStrength);
+  }
 }
 
 float plJoltRagdollComponent::GetJointMotorStrength() const
@@ -925,6 +1007,11 @@ void plJoltRagdollComponent::CreateLimbsFromPose(const plMsgAnimationPoseUpdated
   m_pRagdoll->AddRef();
   m_pRagdoll->AddToPhysicsSystem(JPH::EActivation::Activate);
 
+  if (m_hProfile.IsValid())
+  {
+    CreateController(*pSkeletonResource.GetPointer());
+  }
+
   ApplyInitialImpulse(worldModule, pSkeletonResource->GetDescriptor().m_fMaxImpulse);
 }
 
@@ -935,6 +1022,7 @@ void plJoltRagdollComponent::ConfigureRagdollPart(void* pRagdollSettingsPart, co
   pPart->mPosition = plJoltConversionUtils::ToVec3(globalTransform.m_vPosition);
   pPart->mRotation = plJoltConversionUtils::ToQuat(globalTransform.m_qRotation).Normalized();
   pPart->mMotionQuality = JPH::EMotionQuality::LinearCast;
+  pPart->mFriction = 1.0f; // a multiplier on the material friction for ragdoll bodies, see plJoltContactListener::OnContact()
   pPart->mGravityFactor = m_AnimMode == plJoltRagdollAnimMode::Controlled ? 0.0f : m_fGravityFactor;
   pPart->mUserData = reinterpret_cast<plUInt64>(m_pJoltUserData);
   pPart->mObjectLayer = plJoltCollisionFiltering::ConstructObjectLayer(uiCollisionLayer, plJoltBroadphaseLayer::Ragdoll);
@@ -1023,6 +1111,11 @@ void plJoltRagdollComponent::ApplyInitialImpulse(plJoltWorldModule& worldModule,
   {
     pJoltSystem->GetBodyInterface().AddImpulse(closestBody, plJoltConversionUtils::ToVec3(m_vInitialImpulseDirection), vImpulsePosition);
   }
+
+  if (m_pController)
+  {
+    m_pController->AddHit(m_vInitialImpulseDirection, m_vInitialImpulsePosition);
+  }
 }
 
 void plJoltRagdollComponent::ResetJointMotors()
@@ -1051,7 +1144,8 @@ void plJoltRagdollComponent::ResetJointMotors()
 
 void plJoltRagdollComponent::ApplyJointMotorStrength(float fStrength)
 {
-  if (!m_pRagdoll)
+  // with a controller the strength is a multiplier the controller applies every step
+  if (!m_pRagdoll || m_pController)
     return;
 
   for (int i = 0; i < (int)m_pRagdoll->GetConstraintCount(); ++i)
@@ -1063,12 +1157,12 @@ void plJoltRagdollComponent::ApplyJointMotorStrength(float fStrength)
     {
       JPH::SwingTwistConstraint* pStConstraint = static_cast<JPH::SwingTwistConstraint*>(pConstraint);
 
-      pStConstraint->GetSwingMotorSettings().SetForceLimit(m_fMotorStrength);
-      pStConstraint->GetTwistMotorSettings().SetForceLimit(m_fMotorStrength);
+      pStConstraint->GetSwingMotorSettings().SetForceLimit(fStrength);
+      pStConstraint->GetTwistMotorSettings().SetForceLimit(fStrength);
 
       // torque is needed for the 'powered' animation mode
-      pStConstraint->GetSwingMotorSettings().SetTorqueLimit(m_fMotorStrength);
-      pStConstraint->GetTwistMotorSettings().SetTorqueLimit(m_fMotorStrength);
+      pStConstraint->GetSwingMotorSettings().SetTorqueLimit(fStrength);
+      pStConstraint->GetTwistMotorSettings().SetTorqueLimit(fStrength);
     }
   }
 }
@@ -1437,9 +1531,15 @@ void plJoltRagdollComponent::CreateLimbJoint(const plSkeletonJoint& thisJoint, v
     pJoint->mTwistAxis1 = plJoltConversionUtils::ToVec3(tParent.m_qRotation * offsetRot * plVec3::MakeAxisY()).Normalized();
     pJoint->mTwistAxis2 = plJoltConversionUtils::ToVec3(tThis.m_qRotation * plVec3::MakeAxisY()).Normalized();
 
-    pJoint->mSwingMotorSettings.mSpringSettings.mFrequency = 20;
-    pJoint->mSwingMotorSettings.mSpringSettings.mStiffness = 20;
-    pJoint->mSwingMotorSettings.mSpringSettings.mDamping = 2;
+    // mFrequency and mStiffness share a union in Jolt, so the mode is set explicitly and only one of them is written.
+    // 20 Hz with a damping ratio of 2 is what the old code ended up with. The twist motor used to keep Jolt's default
+    // (2 Hz, ratio 1), which made a powered ragdoll's twist ten times softer than its swing; a profile overrides both per step.
+    for (JPH::MotorSettings* pMotor : {&pJoint->mSwingMotorSettings, &pJoint->mTwistMotorSettings})
+    {
+      pMotor->mSpringSettings.mMode = JPH::ESpringMode::FrequencyAndDamping;
+      pMotor->mSpringSettings.mFrequency = 20.0f;
+      pMotor->mSpringSettings.mDamping = 2.0f;
+    }
 
     pJoint->mSwingMotorSettings.SetForceLimit(m_fMotorStrength);
     pJoint->mTwistMotorSettings.SetForceLimit(m_fMotorStrength);
@@ -1447,6 +1547,271 @@ void plJoltRagdollComponent::CreateLimbJoint(const plSkeletonJoint& thisJoint, v
     // torque is needed for the 'powered' animation mode
     pJoint->mSwingMotorSettings.SetTorqueLimit(m_fMotorStrength);
     pJoint->mTwistMotorSettings.SetTorqueLimit(m_fMotorStrength);
+  }
+}
+
+//////////////////////////////////////////////////////////////////////////
+// Active ragdoll
+
+void plJoltRagdollComponent::SetProfileFile(const char* szFile)
+{
+  plJoltRagdollProfileResourceHandle hProfile;
+
+  if (!plStringUtils::IsNullOrEmpty(szFile))
+  {
+    hProfile = plResourceManager::LoadResource<plJoltRagdollProfileResource>(szFile);
+  }
+
+  SetProfile(hProfile);
+}
+
+const char* plJoltRagdollComponent::GetProfileFile() const
+{
+  if (!m_hProfile.IsValid())
+    return "";
+
+  return m_hProfile.GetResourceID();
+}
+
+void plJoltRagdollComponent::SetProfile(const plJoltRagdollProfileResourceHandle& hProfile)
+{
+  if (m_hProfile == hProfile)
+    return;
+
+  m_hProfile = hProfile;
+
+  if (!HasCreatedLimbs())
+    return;
+
+  DestroyController();
+
+  if (m_hProfile.IsValid())
+  {
+    plResourceLock<plSkeletonResource> pSkeleton(m_hSkeleton, plResourceAcquireMode::BlockTillLoaded);
+    CreateController(*pSkeleton.GetPointer());
+  }
+}
+
+void plJoltRagdollComponent::SetConsciousness(float fConsciousness)
+{
+  m_fConsciousness = plMath::Saturate(fConsciousness);
+  m_fConsciousnessTarget = m_fConsciousness;
+  m_ConsciousnessFadeDuration = plTime::MakeZero();
+}
+
+void plJoltRagdollComponent::FadeConsciousness(float fTargetConsciousness, plTime duration)
+{
+  if (duration <= plTime::MakeZero())
+  {
+    SetConsciousness(fTargetConsciousness);
+    return;
+  }
+
+  m_fConsciousnessTarget = plMath::Saturate(fTargetConsciousness);
+  m_ConsciousnessFadeDuration = duration;
+}
+
+void plJoltRagdollComponent::SetBehaviourEnabled(const char* szBehaviour, bool bEnabled)
+{
+  const plJoltRagdollBehaviour::StorageType flag = plJoltRagdollBehaviour::FromName(szBehaviour);
+
+  if (flag == 0)
+  {
+    plLog::Warning("Unknown ragdoll behaviour '{}'. Use NeutralPose, ImpactSpin, FallPose, ProtectFace, RollGuard, Injury or Balance.", szBehaviour);
+    return;
+  }
+
+  m_Behaviours.AddOrRemove(static_cast<plJoltRagdollBehaviour::Enum>(flag), bEnabled);
+}
+
+bool plJoltRagdollComponent::IsBehaviourEnabled(const char* szBehaviour) const
+{
+  const plJoltRagdollBehaviour::StorageType flag = plJoltRagdollBehaviour::FromName(szBehaviour);
+  return flag != 0 && m_Behaviours.IsSet(static_cast<plJoltRagdollBehaviour::Enum>(flag));
+}
+
+void plJoltRagdollComponent::ResetInjuries()
+{
+  if (m_pController)
+    m_pController->ResetInjuries();
+}
+
+void plJoltRagdollComponent::ApplyImpulse(const plVec3& vPosition, const plVec3& vImpulse)
+{
+  if (!HasCreatedLimbs())
+  {
+    AddInitialImpulse(vPosition, vImpulse);
+    return;
+  }
+
+  const JPH::Vec3 vPos = plJoltConversionUtils::ToVec3(vPosition);
+  float fClosest = plMath::MaxValue<float>();
+  JPH::BodyID closestBody;
+
+  for (plUInt32 i = 0; i < m_pRagdoll->GetBodyCount(); ++i)
+  {
+    JPH::BodyLockRead lock(m_pJoltSystem->GetBodyLockInterface(), m_pRagdoll->GetBodyID(i));
+    if (!lock.Succeeded())
+      continue;
+
+    const float fDistSqr = (lock.GetBody().GetCenterOfMassPosition() - vPos).LengthSq();
+    if (fDistSqr < fClosest)
+    {
+      fClosest = fDistSqr;
+      closestBody = m_pRagdoll->GetBodyID(i);
+    }
+  }
+
+  if (closestBody.IsInvalid())
+    return;
+
+  GetWorld()->GetModule<plJoltWorldModule>()->AddImpulse(closestBody.GetIndexAndSequenceNumber(), vImpulse, vPosition);
+
+  if (m_pController)
+    m_pController->AddHit(vImpulse, vPosition);
+}
+
+plJoltRagdollBalanceState::Enum plJoltRagdollComponent::GetBalanceState() const
+{
+  return m_pController ? m_pController->GetBalanceState() : plJoltRagdollBalanceState::Down;
+}
+
+plUInt32 plJoltRagdollComponent::GetDislocatedJointCount() const
+{
+  return m_pController ? m_pController->GetNumDislocatedJoints() : 0;
+}
+
+void plJoltRagdollComponent::CreateController(const plSkeletonResource& skeletonResource)
+{
+  PL_ASSERT_DEV(m_pController == nullptr, "Controller already exists");
+
+  plResourceLock<plJoltRagdollProfileResource> pProfile(m_hProfile, plResourceAcquireMode::BlockTillLoaded_NeverFail);
+  if (pProfile.GetAcquireResult() != plResourceAcquireResult::Final)
+  {
+    plLog::Warning("Ragdoll profile '{}' could not be loaded; '{}' falls back to a plain ragdoll.", m_hProfile.GetResourceID(), GetOwner()->GetName());
+    return;
+  }
+
+  plHybridArray<plUInt16, 64> partToJoint;
+  partToJoint.SetCount((plUInt32)m_pRagdoll->GetBodyCount(), plInvalidJointIndex);
+
+  for (plUInt32 uiJoint = 0; uiJoint < m_Limbs.GetCount(); ++uiJoint)
+  {
+    if (m_Limbs[uiJoint].m_uiPartIndex != plInvalidJointIndex)
+      partToJoint[m_Limbs[uiJoint].m_uiPartIndex] = (plUInt16)uiJoint;
+  }
+
+  plUniquePtr<plJoltRagdollController> pController = PL_DEFAULT_NEW(plJoltRagdollController);
+  pController->SetProfile(pProfile->GetDescriptor());
+
+  const plUInt32 uiSeed = GetWorld()->GetRandomNumberGenerator().UInt() | 1u;
+
+  if (!pController->Init(m_pRagdoll, m_pJoltSystem, skeletonResource.GetDescriptor(), partToJoint, m_uiObjectFilterID, uiSeed))
+  {
+    pController->Shutdown();
+    plLog::Warning("Ragdoll '{}' has no swing-twist joints; the profile is ignored.", GetOwner()->GetName());
+    return;
+  }
+
+  m_uiProfileContentVersion = pProfile->GetContentVersion();
+  m_pController = std::move(pController);
+
+  auto pMan = static_cast<plJoltRagdollComponentManager*>(GetOwningManager());
+  pMan->m_ControlledRagdolls.PushBack(this);
+}
+
+void plJoltRagdollComponent::DestroyController()
+{
+  if (!m_pController)
+    return;
+
+  m_pController->Shutdown();
+  m_pController.Clear();
+
+  auto pMan = static_cast<plJoltRagdollComponentManager*>(GetOwningManager());
+  pMan->m_ControlledRagdolls.RemoveAndSwap(this);
+}
+
+void plJoltRagdollComponent::PrepareControl(plTime frameTime)
+{
+  // pick up live edits of the profile
+  {
+    plResourceLock<plJoltRagdollProfileResource> pProfile(m_hProfile, plResourceAcquireMode::AllowLoadingFallback_NeverFail);
+    if (pProfile.GetAcquireResult() == plResourceAcquireResult::Final && pProfile->GetContentVersion() != m_uiProfileContentVersion)
+    {
+      m_uiProfileContentVersion = pProfile->GetContentVersion();
+      m_pController->SetProfile(pProfile->GetDescriptor());
+    }
+  }
+
+  const bool bPowered = m_AnimMode == plJoltRagdollAnimMode::Powered || m_AnimMode == plJoltRagdollAnimMode::Active;
+
+  plJoltRagdollController::Inputs inputs;
+  inputs.m_fConsciousness = m_fConsciousness;
+  inputs.m_fStrengthScale = plMath::Max(0.0f, m_fMotorStrength / 100.0f);
+  inputs.m_Behaviours = m_Behaviours;
+  inputs.m_bAnimationDriven = bPowered && m_pSkeletonPose != nullptr && m_fMotorStrength > 0.0f;
+  inputs.m_bActiveMode = m_AnimMode == plJoltRagdollAnimMode::Active;
+  inputs.m_bSuspended = m_AnimMode == plJoltRagdollAnimMode::Controlled;
+  inputs.m_fFrameTime = frameTime.AsFloatInSeconds();
+
+  if (m_AnimMode == plJoltRagdollAnimMode::Controlled)
+  {
+    // kinematic playback stays per frame and the muscles stay out of it
+    DriveAnimated(frameTime);
+  }
+
+  m_pController->Prepare(inputs, inputs.m_bAnimationDriven ? m_pSkeletonPose.Borrow() : nullptr);
+}
+
+void plJoltRagdollComponent::FinishControl()
+{
+  if (!m_pController)
+    return;
+
+  // consciousness fade
+  if (m_ConsciousnessFadeDuration.IsPositive())
+  {
+    const plTime tDiff = GetWorld()->GetClock().GetTimeDiff();
+    const float fLerp = plMath::Saturate((float)(tDiff.GetSeconds() / m_ConsciousnessFadeDuration.GetSeconds()));
+    m_fConsciousness = plMath::Lerp(m_fConsciousness, m_fConsciousnessTarget, fLerp);
+    m_ConsciousnessFadeDuration -= tDiff;
+
+    if (!m_ConsciousnessFadeDuration.IsPositive())
+    {
+      m_fConsciousness = m_fConsciousnessTarget;
+      m_ConsciousnessFadeDuration = plTime::MakeZero();
+    }
+  }
+
+  plHybridArray<plMsgRagdollImpact, 8> impacts;
+  plHybridArray<plMsgRagdollJointDislocated, 2> dislocations;
+  plHybridArray<plMsgRagdollBalanceLost, 1> balanceLost;
+  float fDrop = 0.0f;
+
+  m_pController->PostStep(impacts, dislocations, balanceLost, fDrop);
+
+  if (fDrop > 0.0f)
+  {
+    // a heavy head impact knocks the character out; it does not come back on its own
+    m_fConsciousness = plMath::Max(0.0f, m_fConsciousness - fDrop);
+    m_fConsciousnessTarget = plMath::Min(m_fConsciousnessTarget, m_fConsciousness);
+  }
+
+  for (auto& msg : impacts)
+    GetOwner()->PostEventMessage(msg, this, plTime::MakeZero());
+
+  for (auto& msg : dislocations)
+    GetOwner()->PostEventMessage(msg, this, plTime::MakeZero());
+
+  for (auto& msg : balanceLost)
+    GetOwner()->PostEventMessage(msg, this, plTime::MakeZero());
+
+  const int iDebug = cvar_JoltRagdollDebug;
+  if (iDebug > 0)
+  {
+    auto pMan = static_cast<plJoltRagdollComponentManager*>(GetOwningManager());
+    m_pController->DebugDraw(plDebugRendererContext(GetWorld()), iDebug >= 2 && !pMan->m_ControlledRagdolls.IsEmpty() && pMan->m_ControlledRagdolls[0] == this);
   }
 }
 
