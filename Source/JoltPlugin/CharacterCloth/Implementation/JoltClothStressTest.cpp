@@ -65,7 +65,7 @@ void plJoltClothStressResult::GetSuggestions(plDynamicArray<plString>& out_sugge
     out_suggestions.PushBack("The cloth goes through the body. Run Auto Select so that the shapes it can reach collide, or raise Collider Inflate. Where no shape covers the body, add a collider or paint a backstop.");
 
   if (uiFailed & plJoltClothStressGate::Stretch)
-    out_suggestions.PushBack("The cloth stretches. Turn Tethers on, raise Iterations, or raise Stretch in the fabric.");
+    out_suggestions.PushBack("The cloth stretches. Keep Stretch Limit and Tethers on. Where it still stretches, the cloth is held two ways: against a body shape, or against its max distance. The Strain view shows where: lower Collider Inflate, move the garment off the body there, or let Max Distance grow more gently from the pinned edge.");
 
   if (uiFailed & plJoltClothStressGate::Pop)
     out_suggestions.PushBack("The cloth pops. Set Teleport Mode to Reset or Keep Shape with a Teleport Distance below the jump, and lower Linear Inertia if it happens on a hard stop.");
@@ -163,6 +163,18 @@ void plJoltClothStressTest::Begin(const plJoltClothDescriptor& desc, const plJol
   }
 }
 
+void plJoltClothStressTest::AddEmptyFrame(float fTimeStep)
+{
+  plJoltClothStressFrame frame;
+  frame.m_fTime = m_fTime;
+
+  m_fTime += fTimeStep;
+  m_bHasLastOffsets = false;
+  m_fStretchedFor = 0.0f;
+
+  m_Result.m_Frames.PushBack(frame);
+}
+
 void plJoltClothStressTest::AddFrame(const plJoltClothInstance& instance, const plVec3& vOwnerPosition, plArrayPtr<const plTransform> bodyJoints, float fTimeStep, float fMaxDistanceScale)
 {
   plJoltClothStressFrame frame;
@@ -218,8 +230,18 @@ void plJoltClothStressTest::AddFrame(const plJoltClothInstance& instance, const 
         if (fRest <= 0.0f)
           continue;
 
+        // an edge between two pinned particles is as long as skinning makes it: no cloth setting changes that
+        if (m_pDesc->m_MaxDistance[indices[i + e]] <= 0.0f && m_pDesc->m_MaxDistance[indices[i + (e + 1) % 3]] <= 0.0f)
+          continue;
+
         const float fNow = (m_Positions[indices[i + e]] - m_Positions[indices[i + (e + 1) % 3]]).GetLength();
-        frame.m_fStretch = plMath::Max(frame.m_fStretch, fNow / fRest - 1.0f);
+
+        if (fNow / fRest - 1.0f > frame.m_fStretch)
+        {
+          frame.m_fStretch = fNow / fRest - 1.0f;
+          frame.m_uiStretchedEdge[0] = indices[i + e];
+          frame.m_uiStretchedEdge[1] = indices[i + (e + 1) % 3];
+        }
       }
     }
 
@@ -237,10 +259,21 @@ void plJoltClothStressTest::AddFrame(const plJoltClothInstance& instance, const 
 
     for (plUInt32 p = 0; p < uiParticles; ++p)
     {
+      // a pinned particle is skinned: it is where the garment was modelled, which no cloth setting changes
+      if (m_pDesc->m_MaxDistance[p] <= 0.0f)
+        continue;
+
       for (plUInt32 s = 0; s < uiShapes; ++s)
       {
-        if (GetPenetration(m_BodyShapes[s], shapes[s], m_fShapeScale, m_Positions[p]) > m_Gates.m_fMaxPenetration)
+        // a shape that was inflated for the garment is larger than the body: the body ends that much further in
+        if (GetPenetration(m_BodyShapes[s], shapes[s], m_fShapeScale, m_Positions[p]) - m_BodyShapes[s].m_fInflate * m_fShapeScale > m_Gates.m_fMaxPenetration)
         {
+          if (frame.m_uiInsideBody == 0)
+          {
+            frame.m_uiInsideParticle = p;
+            frame.m_uiInsideShape = s;
+          }
+
           ++frame.m_uiInsideBody;
           break;
         }

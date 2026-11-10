@@ -76,9 +76,20 @@ public:
   void SetLodReferencePoint(const plVec3& vPosition);
   void ClearLodReferencePoint();
 
+  /// \brief How many garments may simulate at once in a quality tier of the game settings ("low", "medium", "high",
+  /// "max", "mobile"): the cvars Jolt.Cloth.Budget.*. Any other name gets the medium budget.
+  static plInt32 GetBudgetForTier(plStringView sQualityPreset);
+
+  /// \brief The budget in force: Jolt.Cloth.MaxSimulatedGarments when it is 0 or more, else the budget of the quality
+  /// tier the game settings have active. Negative means no limit.
+  plInt32 GetBudget();
+
 private:
   void Update(const plWorldModule::UpdateContext& context);
   void UpdateLod();
+
+  plTime m_LastTierCheck;
+  plString m_sQualityTier;
 
   plDynamicArray<plJoltCharacterClothComponent*> m_ToStep;
   plDynamicArray<plJoltCharacterClothComponent*> m_LodCandidates;
@@ -164,8 +175,15 @@ public:
   /// \brief The colour the map views give a value from 0 to 1: blue through teal and amber to red.
   static plColor GetHeatColor(float fValue);
 
+  /// \brief How far to move every particle of a sim mesh along its normal to draw a map over the garment: a few
+  /// millimetres, so that the overlay does not flicker against the mesh. Draw it at plus and at minus the offset.
+  static void GetOverlayOffsets(plArrayPtr<const plVec3> positions, plArrayPtr<const plUInt32> indices, plDynamicArray<plVec3>& out_offsets);
+
   plJoltClothState GetState() const { return m_State; }
   const plJoltClothInstance& GetInstance() const { return m_Instance; }
+
+  /// \brief What the instance was built from, or nullptr while there is none. The stress test measures against it.
+  const plJoltClothSolverSetup* GetSolverSetup() const { return m_pSetup; }
 
   /// \brief Metres to the nearest camera, as the LOD saw it in the last update.
   float GetLodDistance() const { return m_fLodDistance; }

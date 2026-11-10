@@ -62,7 +62,7 @@ class PL_JOLTPLUGIN_DLL plJoltClothResource : public plResource
 
 public:
   /// Version of the file that the cloth asset transform writes.
-  static constexpr plUInt8 FileVersion = 1;
+  static constexpr plUInt8 FileVersion = 3;
 
   plJoltClothResource();
   ~plJoltClothResource();

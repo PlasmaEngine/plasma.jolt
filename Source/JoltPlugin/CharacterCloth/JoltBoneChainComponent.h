@@ -58,6 +58,11 @@ public:
   bool m_bCollideWithBody = true;                   // [ property ] Collide with the skeleton's shapes.
   float m_fTeleportDistance = 2.0f;                 // [ property ]
 
+  /// A garment that is skinned to joints of its own can have its chains swing only while its Character Cloth is not
+  /// simulating: far away, off screen or out of budget. Near the camera the cloth moves it, further away the chains
+  /// do, for a fraction of the cost.
+  bool m_bStandInForCloth = false; // [ property ]
+
   /// \brief Puts the chains back on the animated pose. Call after a camera cut so that no settling shows.
   void Reset(); // [ scriptable ]
 

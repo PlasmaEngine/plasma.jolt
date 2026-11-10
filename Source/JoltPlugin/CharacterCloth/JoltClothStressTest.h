@@ -42,6 +42,13 @@ struct PL_JOLTPLUGIN_DLL plJoltClothStressFrame
   float m_fSolveMs = 0.0f;
   plUInt32 m_uiInsideBody = 0;
   plUInt8 m_uiFailedGates = 0; ///< plJoltClothStressGate bits
+
+  /// The two particles of the edge that is stretched most in this frame: where to look on the garment.
+  plUInt32 m_uiStretchedEdge[2] = {0, 0};
+
+  /// A particle that is inside the body in this frame and the body shape it is in, or plInvalidIndex.
+  plUInt32 m_uiInsideParticle = plInvalidIndex;
+  plUInt32 m_uiInsideShape = plInvalidIndex;
 };
 
 struct PL_JOLTPLUGIN_DLL plJoltClothStressResult
@@ -94,6 +101,10 @@ public:
 
   /// \brief Measures the instance after a step. bodyJoints has the world transform of the joint of every body shape.
   void AddFrame(const plJoltClothInstance& instance, const plVec3& vOwnerPosition, plArrayPtr<const plTransform> bodyJoints, float fTimeStep, float fMaxDistanceScale = 1.0f);
+
+  /// \brief Counts a frame in which there was nothing to measure, such as the first frame of a clip before the cloth
+  /// has a pose. It passes every gate.
+  void AddEmptyFrame(float fTimeStep);
 
   const plJoltClothStressResult& GetResult() const { return m_Result; }
 

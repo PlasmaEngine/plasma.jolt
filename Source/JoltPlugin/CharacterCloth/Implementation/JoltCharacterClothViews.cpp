@@ -63,23 +63,6 @@ namespace
     }
   }
 
-  /// The triangle on both sides of the garment's surface, lifted off it so that it does not flicker against the mesh.
-  void AddSurfaceTriangle(plDynamicArray<plDebugRenderer::Triangle>& ref_triangles, const plVec3& a, const plVec3& b, const plVec3& c, const plColor& color)
-  {
-    plVec3 vNormal = (b - a).CrossRH(c - a);
-    if (vNormal.NormalizeIfNotZero(plVec3::MakeZero(), 1.0e-12f).Failed())
-      return;
-
-    const plVec3 vLift = vNormal * 0.004f;
-
-    plDebugRenderer::Triangle& front = ref_triangles.ExpandAndGetRef();
-    front = plDebugRenderer::Triangle(a + vLift, b + vLift, c + vLift);
-    front.m_color = color;
-
-    plDebugRenderer::Triangle& back = ref_triangles.ExpandAndGetRef();
-    back = plDebugRenderer::Triangle(a - vLift, c - vLift, b - vLift);
-    back.m_color = color;
-  }
 } // namespace
 
 plColor plJoltCharacterClothComponent::GetHeatColor(float fValue)
@@ -87,19 +70,46 @@ plColor plJoltCharacterClothComponent::GetHeatColor(float fValue)
   return Heat(fValue);
 }
 
+void plJoltCharacterClothComponent::GetOverlayOffsets(plArrayPtr<const plVec3> positions, plArrayPtr<const plUInt32> indices, plDynamicArray<plVec3>& out_offsets)
+{
+  // Every particle moves along its own normal, so neighbouring triangles still meet and the overlay has no gaps.
+  out_offsets.Clear();
+  out_offsets.SetCount(positions.GetCount(), plVec3::MakeZero());
+
+  for (plUInt32 i = 0; i + 2 < indices.GetCount(); i += 3)
+  {
+    const plVec3 vFace = (positions[indices[i + 1]] - positions[indices[i]]).CrossRH(positions[indices[i + 2]] - positions[indices[i]]);
+
+    out_offsets[indices[i]] += vFace;
+    out_offsets[indices[i + 1]] += vFace;
+    out_offsets[indices[i + 2]] += vFace;
+  }
+
+  for (plVec3& vOffset : out_offsets)
+  {
+    vOffset.NormalizeIfNotZero(plVec3::MakeZero(), 1.0e-12f).IgnoreResult();
+    vOffset *= 0.004f;
+  }
+}
+
 void plJoltCharacterClothComponent::DrawView(plInt32 iView) const
 {
   const plWorld* pWorld = GetWorld();
   const plVec3 vOrigin = GetOwner()->GetGlobalPosition();
 
-  // State and Cost say something about every garment, also the ones that are not simulating
-  if (iView == ClothView::State || iView == ClothView::Cost)
+  // State says something about every garment, also the ones that are not simulating. Cost labels only the garments
+  // that cost something, so that a crowd stays readable.
+  if (iView == ClothView::State)
   {
     plStringBuilder sLabel;
-    if (iView == ClothView::State)
-      sLabel.SetFormat("{} · {} m", StateName(m_State), plArgF(m_fLodDistance, 0));
-    else
-      sLabel.SetFormat("{} ms · {} particles", plArgF(m_State >= plJoltClothState::Blending ? GetLastStepDuration().GetMilliseconds() : 0.0, 2), m_Instance.GetParticleCount());
+    sLabel.SetFormat("{}, {} m", StateName(m_State), plArgF(m_fLodDistance, 0));
+
+    plDebugRenderer::Draw3DText(pWorld, sLabel.GetData(), vOrigin + plVec3(0, 0, 2.0f), StateColor(m_State), 14);
+  }
+  else if (iView == ClothView::Cost && m_State >= plJoltClothState::Blending)
+  {
+    plStringBuilder sLabel;
+    sLabel.SetFormat("{} ms, {}", plArgF(GetLastStepDuration().GetMilliseconds(), 2), m_Instance.GetParticleCount());
 
     plDebugRenderer::Draw3DText(pWorld, sLabel.GetData(), vOrigin + plVec3(0, 0, 2.0f), StateColor(m_State), 14);
   }
@@ -182,15 +192,23 @@ void plJoltCharacterClothComponent::DrawView(plInt32 iView) const
     // the debug capsule runs along Z, a collider's capsule along its own X axis
     const plQuat qZToX = plQuat::MakeShortestRotation(plVec3(0, 0, 1), plVec3(1, 0, 0));
 
+    // particles that are inside a shape, which is where a shape is too small or missing its inflate
+    plDynamicArray<bool> inside;
+    inside.SetCount(positions.GetCount(), false);
+
     for (plUInt32 c = 0; c < desc.m_Colliders.GetCount() && c < m_ColliderTransforms.GetCount(); ++c)
     {
       const plJoltClothCollider& collider = desc.m_Colliders[c];
       const plTransform& joint = m_ColliderTransforms[c];
 
-      plTransform shape;
-      shape.m_vPosition = joint.m_vPosition + joint.m_qRotation * (collider.m_Transform.m_vPosition * fScale);
-      shape.m_qRotation = joint.m_qRotation * collider.m_Transform.m_qRotation;
-      shape.m_vScale.Set(1.0f);
+      plTransform shape = collider.GetShapeTransform(joint, fScale);
+
+      for (plUInt32 p = 0; p < positions.GetCount(); ++p)
+      {
+        plVec3 vPoint = positions[p];
+        if (!inside[p] && collider.PushOut(shape, fScale, -0.005f, vPoint))
+          inside[p] = true;
+      }
 
       switch (collider.m_Type)
       {
@@ -208,6 +226,25 @@ void plJoltCharacterClothComponent::DrawView(plInt32 iView) const
           break;
       }
     }
+
+    plDynamicArray<plDebugRenderer::Line> marks;
+    const float fMark = 0.012f;
+
+    for (plUInt32 p = 0; p < positions.GetCount(); ++p)
+    {
+      if (!inside[p])
+        continue;
+
+      for (const plVec3& vAxis : {plVec3(fMark, 0, 0), plVec3(0, fMark, 0), plVec3(0, 0, fMark)})
+      {
+        plDebugRenderer::Line& line = marks.ExpandAndGetRef();
+        line.m_start = positions[p] - vAxis;
+        line.m_end = positions[p] + vAxis;
+      }
+    }
+
+    if (!marks.IsEmpty())
+      plDebugRenderer::DrawLines(pWorld, marks, plColor(1.0f, 0.15f, 0.15f));
   }
 
   if (iView == ClothView::MaxDistance || iView == ClothView::Backstop || iView == ClothView::State || iView == ClothView::Cost)
@@ -222,6 +259,9 @@ void plJoltCharacterClothComponent::DrawView(plInt32 iView) const
     plColor garmentColor = StateColor(m_State);
     if (iView == ClothView::Cost)
       garmentColor = Heat(static_cast<float>(GetLastStepDuration().GetMilliseconds()) / 0.6f);
+
+    plDynamicArray<plVec3> offsets;
+    GetOverlayOffsets(positions, indices, offsets);
 
     plDynamicArray<plDebugRenderer::Triangle> triangles;
     triangles.Reserve(indices.GetCount() / 3 * 2);
@@ -238,7 +278,14 @@ void plJoltCharacterClothComponent::DrawView(plInt32 iView) const
       else if (iView == ClothView::Backstop)
         color = Heat((desc.m_BackstopDistance[a] + desc.m_BackstopDistance[b] + desc.m_BackstopDistance[c]) / (3.0f * 0.2f));
 
-      AddSurfaceTriangle(triangles, positions[a], positions[b], positions[c], color);
+      // on both sides of the cloth
+      plDebugRenderer::Triangle& front = triangles.ExpandAndGetRef();
+      front = plDebugRenderer::Triangle(positions[a] + offsets[a], positions[b] + offsets[b], positions[c] + offsets[c]);
+      front.m_color = color;
+
+      plDebugRenderer::Triangle& back = triangles.ExpandAndGetRef();
+      back = plDebugRenderer::Triangle(positions[a] - offsets[a], positions[c] - offsets[c], positions[b] - offsets[b]);
+      back.m_color = color;
     }
 
     plDebugRenderer::DrawSolidTriangles(pWorld, triangles, plColor::White);

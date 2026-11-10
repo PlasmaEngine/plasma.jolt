@@ -10,6 +10,8 @@
 #include <Foundation/Time/Stopwatch.h>
 #include <Foundation/Utilities/Stats.h>
 #include <GameEngine/Animation/Skeletal/AnimatedMeshComponent.h>
+#include <GameEngine/Configuration/GameSettings.h>
+#include <GameEngine/GameApplication/GameApplication.h>
 #include <JoltPlugin/CharacterCloth/JoltCharacterClothComponent.h>
 #include <JoltPlugin/System/JoltWorldModule.h>
 #include <Core/Graphics/Camera.h>
@@ -24,7 +26,12 @@
 // clang-format off
 plCVarBool cvar_JoltClothEnable("Jolt.Cloth.Enable", true, plCVarFlags::Default, "Simulate character cloth. Off draws every garment skinned.");
 plCVarBool cvar_JoltClothParallel("Jolt.Cloth.Parallel", true, plCVarFlags::Default, "Step character cloth garments on worker threads.");
-plCVarInt cvar_JoltClothMaxGarments("Jolt.Cloth.MaxSimulatedGarments", 12, plCVarFlags::Save, "How many character cloth garments may simulate at once. The nearest ones win; the rest are drawn skinned. Garments with Importance Always simulate on top of this. A negative value means no limit.");
+plCVarInt cvar_JoltClothMaxGarments("Jolt.Cloth.MaxSimulatedGarments", -1, plCVarFlags::Default, "How many character cloth garments may simulate at once, whatever the quality tier. The nearest ones win; the rest are drawn skinned. Garments with Importance Always simulate on top of this. -1 takes the budget of the active quality tier (Jolt.Cloth.Budget.*).");
+plCVarInt cvar_JoltClothBudgetLow("Jolt.Cloth.Budget.Low", 4, plCVarFlags::Save, "Garments that may simulate at once in the Low quality tier. A negative value means no limit. A project sets its budgets in RuntimeConfigs/CVars.cfg.");
+plCVarInt cvar_JoltClothBudgetMedium("Jolt.Cloth.Budget.Medium", 8, plCVarFlags::Save, "Garments that may simulate at once in the Medium quality tier, and wherever no tier is known.");
+plCVarInt cvar_JoltClothBudgetHigh("Jolt.Cloth.Budget.High", 12, plCVarFlags::Save, "Garments that may simulate at once in the High quality tier.");
+plCVarInt cvar_JoltClothBudgetMax("Jolt.Cloth.Budget.Max", 24, plCVarFlags::Save, "Garments that may simulate at once in the Max quality tier.");
+plCVarInt cvar_JoltClothBudgetMobile("Jolt.Cloth.Budget.Mobile", 2, plCVarFlags::Save, "Garments that may simulate at once in the Mobile quality tier.");
 plCVarInt cvar_JoltClothView("Jolt.Cloth.View", 0, plCVarFlags::Default, "Draws character cloth debug views. 0 off, 1 Sim Mesh, 2 Max Distance, 3 Backstop, 4 Colliders, 5 Strain, 6 State, 7 Cost.");
 
 PL_BEGIN_STATIC_REFLECTED_ENUM(plJoltClothImportance, 1)
@@ -125,6 +132,47 @@ void plJoltCharacterClothComponentManager::ClearLodReferencePoint()
   m_bHasLodReferencePoint = false;
 }
 
+plInt32 plJoltCharacterClothComponentManager::GetBudgetForTier(plStringView sQualityPreset)
+{
+  if (sQualityPreset.IsEqual_NoCase("low"))
+    return cvar_JoltClothBudgetLow;
+  if (sQualityPreset.IsEqual_NoCase("high"))
+    return cvar_JoltClothBudgetHigh;
+  if (sQualityPreset.IsEqual_NoCase("max"))
+    return cvar_JoltClothBudgetMax;
+  if (sQualityPreset.IsEqual_NoCase("mobile"))
+    return cvar_JoltClothBudgetMobile;
+
+  // medium, a preset of the project's own, and an application without game settings
+  return cvar_JoltClothBudgetMedium;
+}
+
+plInt32 plJoltCharacterClothComponentManager::GetBudget()
+{
+  if (cvar_JoltClothMaxGarments >= 0)
+    return cvar_JoltClothMaxGarments;
+
+  // The quality tier changes when the player changes it, which is rare, and asking for it copies the settings:
+  // once a second is plenty.
+  const plTime now = plTime::Now();
+
+  if (now - m_LastTierCheck >= plTime::MakeFromSeconds(1.0) || m_LastTierCheck.IsZero())
+  {
+    m_LastTierCheck = now;
+    m_sQualityTier = "medium";
+
+    if (plGameApplication* pApplication = plGameApplication::GetGameApplicationInstance())
+    {
+      const plVariantDictionary settings = pApplication->GetGameSettings().GetEffectiveSettings();
+
+      if (const plVariant* pPreset = settings.GetValue("Quality.Preset"); pPreset != nullptr && pPreset->IsA<plString>())
+        m_sQualityTier = pPreset->Get<plString>();
+    }
+  }
+
+  return GetBudgetForTier(m_sQualityTier);
+}
+
 void plJoltCharacterClothComponentManager::UpdateLod()
 {
   // where the garments are looked at from
@@ -198,7 +246,7 @@ void plJoltCharacterClothComponentManager::UpdateLod()
 
       return pLhs->m_fLodDistance < pRhs->m_fLodDistance; });
 
-  const plInt32 iBudget = cvar_JoltClothMaxGarments;
+  const plInt32 iBudget = GetBudget();
   plInt32 iGranted = 0;
 
   for (plJoltCharacterClothComponent* pCloth : m_LodCandidates)
@@ -630,6 +678,7 @@ void plJoltCharacterClothComponent::ClearClothOnMesh()
 
 bool plJoltCharacterClothComponent::PrepareStep(plTime timeStep)
 {
+  const plJoltClothState stateBefore = m_State;
   m_State = plJoltClothState::Inactive;
 
   if (!cvar_JoltClothEnable || !m_hCloth.IsValid())
@@ -654,10 +703,19 @@ bool plJoltCharacterClothComponent::PrepareStep(plTime timeStep)
   if (!AcquireData())
     return false;
 
-  // a paused world keeps its cloth as it is
-  const float fTimeStep = plMath::Min(timeStep.AsFloatInSeconds(), s_fLongestTimeStep);
+  // A paused world keeps its cloth as it is, and its debug views go on showing it. A garment that has not started
+  // yet (new, or rebuilt after its asset changed) takes one step from the pose, so that it shows as cloth.
+  float fTimeStep = plMath::Min(timeStep.AsFloatInSeconds(), s_fLongestTimeStep);
   if (fTimeStep <= 0.0f)
-    return false;
+  {
+    if (m_Instance.IsInitialized() && !m_bResetPending)
+    {
+      m_State = stateBefore;
+      return false;
+    }
+
+    fTimeStep = 1.0f / 60.0f;
+  }
 
   m_fSimulateBlend = Approach(m_fSimulateBlend, m_bSimulate ? 1.0f : 0.0f, m_fSimulateBlendSpeed, fTimeStep);
   m_fLodBlend = Approach(m_fLodBlend, m_bLodGranted ? 1.0f : 0.0f, 1.0f / s_fLodBlendTime, fTimeStep);

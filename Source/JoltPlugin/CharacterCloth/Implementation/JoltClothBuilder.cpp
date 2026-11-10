@@ -649,7 +649,220 @@ namespace
 
     return plTransform(mFull.GetTranslationVector(), qRotation);
   }
+
+  /// Whether a free particle of the cloth can come within the margin of the shape, standing in its bind pose. The
+  /// shape is taken as a capsule around its long axis; a box as the sphere around it.
+  bool IsColliderInReach(const plJoltClothDescriptor& desc, const plJoltClothCollider& collider, float fMargin)
+  {
+    const plTransform shape = collider.GetShapeTransform(collider.m_JointBindPose);
+
+    const plVec3 vCenter = shape.m_vPosition;
+    const plVec3 vAxis = shape.m_qRotation * plVec3(1, 0, 0);
+
+    float fHalfLength = 0.0f;
+    float fRadius = collider.m_fRadius;
+
+    if (collider.m_Type == plJoltClothCollider::Type::Capsule)
+      fHalfLength = collider.m_fLength * 0.5f;
+    else if (collider.m_Type == plJoltClothCollider::Type::Box)
+      fRadius = collider.m_vHalfExtents.GetLength();
+
+    for (plUInt32 p = 0; p < desc.m_Positions.GetCount(); ++p)
+    {
+      if (desc.m_MaxDistance[p] <= 0.0f)
+        continue;
+
+      const plVec3 vToParticle = desc.m_Positions[p] - vCenter;
+      const float fAlong = plMath::Clamp(vToParticle.Dot(vAxis), -fHalfLength, fHalfLength);
+      const float fDistance = (vToParticle - vAxis * fAlong).GetLength() - fRadius;
+
+      if (fDistance <= desc.m_MaxDistance[p] + desc.m_Fabric.m_fThickness + fMargin)
+        return true;
+    }
+
+    return false;
+  }
 } // namespace
+
+plUInt32 plJoltClothBuilder::FitCollidersFromSkin(plArrayPtr<const plVec3> positions, plArrayPtr<const plVec4U16> boneIndices, plArrayPtr<const plVec4> boneWeights, plArrayPtr<const plHashedString> boneNames, plArrayPtr<const plMat4> inverseBindPoses, const plJoltClothSkinFitOptions& options, const plJoltClothDescriptor* pReach, plDynamicArray<plJoltClothCollider>& out_colliders)
+{
+  const plUInt32 uiBones = plMath::Min(boneNames.GetCount(), inverseBindPoses.GetCount());
+
+  // the vertices of every bone, in the space of its joint
+  plDynamicArray<plDynamicArray<plVec3>> perBone;
+  perBone.SetCount(uiBones);
+
+  for (plUInt32 v = 0; v < positions.GetCount(); ++v)
+  {
+    const plVec4U16& indices = boneIndices[v];
+    const plVec4& weights = boneWeights[v];
+
+    const plUInt16 uiIndex[4] = {indices.x, indices.y, indices.z, indices.w};
+    const float fWeight[4] = {weights.x, weights.y, weights.z, weights.w};
+
+    plUInt32 uiStrongest = 0;
+    for (plUInt32 i = 1; i < 4; ++i)
+    {
+      if (fWeight[i] > fWeight[uiStrongest])
+        uiStrongest = i;
+    }
+
+    if (fWeight[uiStrongest] < options.m_fMinWeight || uiIndex[uiStrongest] >= uiBones)
+      continue;
+
+    perBone[uiIndex[uiStrongest]].PushBack(inverseBindPoses[uiIndex[uiStrongest]].TransformPosition(positions[v]));
+  }
+
+  plUInt32 uiAdded = 0;
+
+  for (plUInt32 b = 0; b < uiBones; ++b)
+  {
+    const plDynamicArray<plVec3>& points = perBone[b];
+    if (points.GetCount() < options.m_uiMinVertices)
+      continue;
+
+    plVec3 vMean = plVec3::MakeZero();
+    for (const plVec3& vPoint : points)
+    {
+      vMean += vPoint;
+    }
+    vMean /= static_cast<float>(points.GetCount());
+
+    // The long axis of the part is the direction its vertices spread most in: the largest eigenvector of their
+    // covariance, found by multiplying a vector with it until it stops turning.
+    plMat3 mCovariance = plMat3::MakeZero();
+    for (const plVec3& vPoint : points)
+    {
+      const plVec3 d = vPoint - vMean;
+
+      for (plUInt32 r = 0; r < 3; ++r)
+      {
+        for (plUInt32 c = 0; c < 3; ++c)
+        {
+          mCovariance.Element(c, r) += d.GetData()[r] * d.GetData()[c];
+        }
+      }
+    }
+
+    plVec3 vAxis(1.0f, 0.7f, 0.4f);
+    for (plUInt32 i = 0; i < 24; ++i)
+    {
+      vAxis = mCovariance * vAxis;
+
+      if (vAxis.NormalizeIfNotZero(plVec3(1, 0, 0), 1.0e-20f).Failed())
+        break;
+    }
+
+    float fMin = plMath::MaxValue<float>();
+    float fMax = -plMath::MaxValue<float>();
+    double fAlongSqr = 0.0;
+    double fAcrossSqr = 0.0;
+
+    for (const plVec3& vPoint : points)
+    {
+      const plVec3 d = vPoint - vMean;
+      const float fAlong = d.Dot(vAxis);
+
+      fMin = plMath::Min(fMin, fAlong);
+      fMax = plMath::Max(fMax, fAlong);
+      fAlongSqr += fAlong * fAlong;
+      fAcrossSqr += (d - vAxis * fAlong).GetLengthSquared();
+    }
+
+    fAlongSqr /= points.GetCount();
+    fAcrossSqr /= points.GetCount();
+
+    plJoltClothCollider collider;
+    collider.m_sJoint = boneNames[b];
+    collider.m_JointBindPose = ToJointTransform(inverseBindPoses[b].GetInverse());
+
+    // The vertices lie on the skin. A part that spreads about as far along its axis as across it is a ball, and its
+    // radius their distance from the middle. Any other part is a limb, and its radius their distance from the axis.
+    if (fAlongSqr < 1.5 * fAcrossSqr * 0.5)
+    {
+      collider.m_Type = plJoltClothCollider::Type::Sphere;
+      collider.m_fRadius = plMath::Sqrt(static_cast<float>(fAlongSqr + fAcrossSqr)) * options.m_fRadiusScale;
+      collider.m_fLength = 0.0f;
+      collider.m_Transform.m_vPosition = vMean;
+    }
+    else
+    {
+      collider.m_Type = plJoltClothCollider::Type::Capsule;
+      collider.m_fRadius = plMath::Sqrt(static_cast<float>(fAcrossSqr)) * options.m_fRadiusScale;
+      collider.m_fLength = plMath::Max(0.0f, (fMax - fMin) - 2.0f * collider.m_fRadius);
+      collider.m_Transform.m_vPosition = vMean + vAxis * ((fMin + fMax) * 0.5f);
+      collider.m_Transform.m_qRotation = plQuat::MakeShortestRotation(plVec3(1, 0, 0), vAxis);
+    }
+
+    if (collider.m_fRadius < options.m_fMinRadius)
+      continue;
+
+    if (pReach != nullptr && !IsColliderInReach(*pReach, collider, options.m_fReachMargin))
+      continue;
+
+    out_colliders.PushBack(collider);
+    ++uiAdded;
+  }
+
+  return uiAdded;
+}
+
+plUInt32 plJoltClothBuilder::FitCollidersFromSkin(const plMeshResourceDescriptor& mesh, const plJoltClothSkinFitOptions& options, const plJoltClothDescriptor* pReach, plDynamicArray<plJoltClothCollider>& out_colliders)
+{
+  const plMeshBufferResourceDescriptor& buffer = mesh.MeshBufferDesc();
+  const plUInt32 uiVertices = buffer.GetVertexCount();
+
+  if (uiVertices == 0 || mesh.m_Bones.IsEmpty() || !buffer.GetVertexStreamConfig().HasSkinningData())
+    return 0;
+
+  // garments hang on the body; they are not the body
+  plDynamicArray<bool> isGarment;
+  isGarment.SetCount(uiVertices, false);
+
+  for (const auto& garment : mesh.GetClothSubMeshes())
+  {
+    if (garment.m_bIsProxy)
+      continue;
+
+    for (plUInt32 v = 0; v < garment.m_uiVertexCount && garment.m_uiFirstVertex + v < uiVertices; ++v)
+    {
+      isGarment[garment.m_uiFirstVertex + v] = true;
+    }
+  }
+
+  plDynamicArray<plVec3> positions;
+  plDynamicArray<plVec4U16> boneIndices;
+  plDynamicArray<plVec4> boneWeights;
+
+  for (plUInt32 v = 0; v < uiVertices; ++v)
+  {
+    if (isGarment[v])
+      continue;
+
+    positions.PushBack(buffer.GetPosition(v));
+    boneIndices.PushBack(buffer.GetBoneIndices(v));
+    boneWeights.PushBack(buffer.GetBoneWeights(v));
+  }
+
+  plUInt32 uiBones = 0;
+  for (auto it = mesh.m_Bones.GetIterator(); it.IsValid(); ++it)
+  {
+    uiBones = plMath::Max<plUInt32>(uiBones, it.Value().m_uiBoneIndex + 1u);
+  }
+
+  plDynamicArray<plHashedString> boneNames;
+  plDynamicArray<plMat4> inverseBindPoses;
+  boneNames.SetCount(uiBones);
+  inverseBindPoses.SetCount(uiBones, plMat4::MakeIdentity());
+
+  for (auto it = mesh.m_Bones.GetIterator(); it.IsValid(); ++it)
+  {
+    boneNames[it.Value().m_uiBoneIndex] = it.Key();
+    inverseBindPoses[it.Value().m_uiBoneIndex] = it.Value().m_GlobalInverseRestPoseMatrix;
+  }
+
+  return FitCollidersFromSkin(positions, boneIndices, boneWeights, boneNames, inverseBindPoses, options, pReach, out_colliders);
+}
 
 void plJoltClothBuilder::SetJointBindPoses(const plSkeletonResourceDescriptor& skeleton, plJoltClothDescriptor& ref_desc)
 {
@@ -682,39 +895,6 @@ plUInt32 plJoltClothBuilder::AddSkeletonColliders(const plSkeletonResourceDescri
     for (const plString& sListed : options.m_Joints)
     {
       if (sJoint.IsEqual_NoCase(sListed))
-        return true;
-    }
-
-    return false;
-  };
-
-  // Whether a free particle can come within the margin of the shape. The shape is taken as a capsule around its
-  // long axis; a box as the sphere around it.
-  auto IsInReach = [&](const plJoltClothCollider& collider) -> bool
-  {
-    const plTransform shape = collider.GetShapeTransform(collider.m_JointBindPose);
-
-    const plVec3 vCenter = shape.m_vPosition;
-    const plVec3 vAxis = shape.m_qRotation * plVec3(1, 0, 0);
-
-    float fHalfLength = 0.0f;
-    float fRadius = collider.m_fRadius;
-
-    if (collider.m_Type == plJoltClothCollider::Type::Capsule)
-      fHalfLength = collider.m_fLength * 0.5f;
-    else if (collider.m_Type == plJoltClothCollider::Type::Box)
-      fRadius = collider.m_vHalfExtents.GetLength();
-
-    for (plUInt32 p = 0; p < ref_desc.m_Positions.GetCount(); ++p)
-    {
-      if (ref_desc.m_MaxDistance[p] <= 0.0f)
-        continue;
-
-      const plVec3 vToParticle = ref_desc.m_Positions[p] - vCenter;
-      const float fAlong = plMath::Clamp(vToParticle.Dot(vAxis), -fHalfLength, fHalfLength);
-      const float fDistance = (vToParticle - vAxis * fAlong).GetLength() - fRadius;
-
-      if (fDistance <= ref_desc.m_MaxDistance[p] + ref_desc.m_Fabric.m_fThickness + options.m_fReachMargin)
         return true;
     }
 
@@ -778,10 +958,11 @@ plUInt32 plJoltClothBuilder::AddSkeletonColliders(const plSkeletonResourceDescri
 
     collider.m_fRadius = plMath::Max(0.005f, collider.m_fRadius + options.m_fInflate);
     collider.m_vHalfExtents = (collider.m_vHalfExtents + plVec3(options.m_fInflate)).CompMax(plVec3(0.005f));
+    collider.m_fInflate = plMath::Max(0.0f, options.m_fInflate);
 
     if (!options.m_bAllShapes)
     {
-      const bool bTake = options.m_Joints.IsEmpty() ? IsInReach(collider) : IsListed(joint.GetName().GetView());
+      const bool bTake = options.m_Joints.IsEmpty() ? IsColliderInReach(ref_desc, collider, options.m_fReachMargin) : IsListed(joint.GetName().GetView());
       if (!bTake)
         continue;
     }

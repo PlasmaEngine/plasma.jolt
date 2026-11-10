@@ -5,6 +5,7 @@
 #include <Core/WorldSerializer/WorldWriter.h>
 #include <Foundation/Configuration/CVar.h>
 #include <JoltPlugin/CharacterCloth/JoltBoneChainComponent.h>
+#include <JoltPlugin/CharacterCloth/JoltCharacterClothComponent.h>
 #include <JoltPlugin/CharacterCloth/JoltClothBuilder.h>
 #include <RendererCore/AnimationSystem/SkeletonResource.h>
 #include <RendererCore/Debug/DebugRenderer.h>
@@ -12,7 +13,7 @@
 // clang-format off
 plCVarBool cvar_JoltBoneChainVisualize("Jolt.BoneChain.Visualize", false, plCVarFlags::Default, "Draws the simulated bone chains.");
 
-PL_BEGIN_COMPONENT_TYPE(plJoltBoneChainComponent, 1, plComponentMode::Dynamic)
+PL_BEGIN_COMPONENT_TYPE(plJoltBoneChainComponent, 2, plComponentMode::Dynamic)
 {
   PL_BEGIN_PROPERTIES
   {
@@ -26,6 +27,7 @@ PL_BEGIN_COMPONENT_TYPE(plJoltBoneChainComponent, 1, plComponentMode::Dynamic)
     PL_MEMBER_PROPERTY("CollideWithBody", m_bCollideWithBody)->AddAttributes(new plDefaultValueAttribute(true)),
     PL_MEMBER_PROPERTY("Radius", m_fRadius)->AddAttributes(new plDefaultValueAttribute(0.03f), new plClampValueAttribute(0.0f, 1.0f)),
     PL_MEMBER_PROPERTY("TeleportDistance", m_fTeleportDistance)->AddAttributes(new plDefaultValueAttribute(2.0f), new plClampValueAttribute(0.1f, 1000.0f)),
+    PL_MEMBER_PROPERTY("StandInForCloth", m_bStandInForCloth),
   }
   PL_END_PROPERTIES;
   PL_BEGIN_MESSAGEHANDLERS
@@ -49,7 +51,7 @@ PL_END_DYNAMIC_REFLECTED_TYPE;
 
 namespace
 {
-  constexpr float s_fLongestTimeStep = 1.0f / 15.0f;
+  constexpr float s_fLongestChainTimeStep = 1.0f / 15.0f;
 } // namespace
 
 //////////////////////////////////////////////////////////////////////////
@@ -102,6 +104,7 @@ void plJoltBoneChainComponent::SerializeComponent(plWorldWriter& inout_stream) c
   s << m_MaxAngle;
   s << m_bCollideWithBody;
   s << m_fTeleportDistance;
+  s << m_bStandInForCloth;
 }
 
 void plJoltBoneChainComponent::DeserializeComponent(plWorldReader& inout_stream)
@@ -119,6 +122,9 @@ void plJoltBoneChainComponent::DeserializeComponent(plWorldReader& inout_stream)
   s >> m_MaxAngle;
   s >> m_bCollideWithBody;
   s >> m_fTeleportDistance;
+
+  if (inout_stream.GetComponentTypeVersion(GetStaticRTTI()) >= 2)
+    s >> m_bStandInForCloth;
 }
 
 void plJoltBoneChainComponent::OnSimulationStarted()
@@ -283,9 +289,22 @@ void plJoltBoneChainComponent::Update(plTime timeStep)
   }
 
   // a paused world keeps its chains as they are
-  const float fTimeStep = plMath::Min(timeStep.AsFloatInSeconds(), s_fLongestTimeStep);
+  const float fTimeStep = plMath::Min(timeStep.AsFloatInSeconds(), s_fLongestChainTimeStep);
   if (m_Solvers.IsEmpty() || fTimeStep <= 0.0f)
     return;
+
+  // A stand-in rests while the cloth simulates: the animated pose goes through as it is, and the chains start from
+  // it when the cloth hands over. The cloth steps after the chains, so its state is the one of the last frame.
+  if (m_bStandInForCloth)
+  {
+    const plJoltCharacterClothComponent* pCloth = nullptr;
+
+    if (GetOwner()->TryGetComponentOfBaseType(pCloth) && pCloth->GetState() >= plJoltClothState::Blending)
+    {
+      m_bResetPending = true;
+      return;
+    }
+  }
 
   const plTransform ownerTransform = GetOwner()->GetGlobalTransform();
   const plMat4 mModelToWorld = ownerTransform.GetAsMat4() * m_RootTransform.GetAsMat4();

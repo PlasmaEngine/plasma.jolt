@@ -58,6 +58,16 @@ struct PL_JOLTPLUGIN_DLL plJoltClothSkeletonColliderOptions
   bool m_bAllShapes = false;           ///< take every shape, whatever m_Joints says. The stress test checks the cloth against all of them.
 };
 
+/// \brief How Fit From Skin turns the body's skin weights into capsules.
+struct PL_JOLTPLUGIN_DLL plJoltClothSkinFitOptions
+{
+  float m_fMinWeight = 0.5f;      ///< a vertex belongs to the bone it is skinned to at least this strongly
+  plUInt32 m_uiMinVertices = 12;  ///< bones with fewer vertices get no shape
+  float m_fMinRadius = 0.025f;    ///< metres. Thinner parts, fingers for one, get no shape.
+  float m_fRadiusScale = 0.95f;   ///< the shape sits just inside the skin, so that cloth resting on it does not float
+  float m_fReachMargin = 0.05f;   ///< with a cloth to fit for: only shapes a free particle can come this close to
+};
+
 /// \brief Maps painted in the cloth window.
 ///
 /// Each sample remembers the bind-space position it was painted at, so the maps survive a reimport that changes the
@@ -117,6 +127,16 @@ public:
   /// The shapes are the ones ragdolls and hitboxes use, so a character that has those needs no extra setup.
   /// Convex shapes are skipped.
   static plUInt32 AddSkeletonColliders(const plSkeletonResourceDescriptor& skeleton, const plJoltClothSkeletonColliderOptions& options, plJoltClothDescriptor& ref_desc);
+
+  /// \brief Fits a capsule or a sphere to the part of the body that is skinned to each bone, for a skeleton without
+  /// shapes. Returns how many it made.
+  ///
+  /// Vertices are given in the bind space of the mesh, one bone index and weight set each. boneNames and
+  /// inverseBindPoses are indexed by bone index. With pReach only the shapes that cloth can reach are kept.
+  static plUInt32 FitCollidersFromSkin(plArrayPtr<const plVec3> positions, plArrayPtr<const plVec4U16> boneIndices, plArrayPtr<const plVec4> boneWeights, plArrayPtr<const plHashedString> boneNames, plArrayPtr<const plMat4> inverseBindPoses, const plJoltClothSkinFitOptions& options, const plJoltClothDescriptor* pReach, plDynamicArray<plJoltClothCollider>& out_colliders);
+
+  /// \brief The same for the body of a mesh: every vertex that does not belong to a garment.
+  static plUInt32 FitCollidersFromSkin(const plMeshResourceDescriptor& mesh, const plJoltClothSkinFitOptions& options, const plJoltClothDescriptor* pReach, plDynamicArray<plJoltClothCollider>& out_colliders);
 
   /// \brief Notes for every collider where its joint is in the skeleton's rest pose (plJoltClothCollider::m_JointBindPose).
   static void SetJointBindPoses(const plSkeletonResourceDescriptor& skeleton, plJoltClothDescriptor& ref_desc);

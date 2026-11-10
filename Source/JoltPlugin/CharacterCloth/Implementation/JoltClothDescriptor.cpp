@@ -95,6 +95,7 @@ plResult plJoltClothCollider::Serialize(plStreamWriter& inout_stream) const
   inout_stream << m_fLength;
   inout_stream << m_vHalfExtents;
   inout_stream << m_JointBindPose;
+  inout_stream << m_fInflate;
 
   return PL_SUCCESS;
 }
@@ -110,6 +111,7 @@ plResult plJoltClothCollider::Deserialize(plStreamReader& inout_stream)
   inout_stream >> m_fLength;
   inout_stream >> m_vHalfExtents;
   inout_stream >> m_JointBindPose;
+  inout_stream >> m_fInflate;
 
   if (uiType > static_cast<plUInt8>(Type::Box))
     return PL_FAILURE;
@@ -128,6 +130,7 @@ plResult plJoltClothSimulationSettings::Serialize(plStreamWriter& inout_stream) 
   inout_stream << m_fGravityFactor;
   inout_stream << m_fFullRateDistance;
   inout_stream << m_fSimulateDistance;
+  inout_stream << m_fStretchLimit;
 
   return PL_SUCCESS;
 }
@@ -144,6 +147,7 @@ plResult plJoltClothSimulationSettings::Deserialize(plStreamReader& inout_stream
   inout_stream >> m_fGravityFactor;
   inout_stream >> m_fFullRateDistance;
   inout_stream >> m_fSimulateDistance;
+  inout_stream >> m_fStretchLimit;
 
   if (uiWorldCollision > plJoltClothWorldCollision::All)
     return PL_FAILURE;

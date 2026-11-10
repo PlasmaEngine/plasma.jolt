@@ -48,6 +48,17 @@ struct PL_JOLTPLUGIN_DLL plJoltClothSolverSetup
   float m_fUniformScale = 1.0f; ///< how many metres of simulation space one unit of bind space is
   plDynamicArray<plUInt16> m_Bones; ///< the mesh bones the particles use; the solver's joint i is mesh bone m_Bones[i]
   plUInt32 m_uiNumConstraints = 0;
+
+  /// An edge of the sim mesh for the stretch limit. The edges are in the order they are walked in: outward from the
+  /// pinned particles, so that every edge is put right after the edges that hold its near end.
+  struct LimitEdge
+  {
+    plUInt32 m_uiNear = 0;     ///< the end that is closer to a pinned particle
+    plUInt32 m_uiFar = 0;
+    float m_fRestLength = 0.0f; ///< in simulation space
+    bool m_bSameDepth = false;  ///< both ends are equally far from the pins: they share what has to give
+  };
+  plDynamicArray<LimitEdge> m_LimitEdges;
 };
 
 /// \brief One simulated garment: a Jolt soft body that is stepped by hand, right after its character's pose is known.
@@ -121,6 +132,7 @@ private:
   void ApplyAerodynamics(const StepInput& input, const plVec3& vOwnerVelocity);
   void ComputeSkinnedPositions(float fTimeStep, bool bReset);
   void ClampToEnvelope(float fMaxDistanceScale);
+  void LimitStretch(float fLimit);
 
   plJoltWorldModule* m_pModule = nullptr;
   const plJoltClothDescriptor* m_pDesc = nullptr;

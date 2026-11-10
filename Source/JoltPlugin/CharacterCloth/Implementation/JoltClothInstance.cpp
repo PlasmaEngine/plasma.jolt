@@ -1,5 +1,6 @@
 #include <JoltPlugin/JoltPluginPCH.h>
 
+#include <Foundation/Containers/HashSet.h>
 #include <Foundation/Time/Stopwatch.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
@@ -229,6 +230,103 @@ plResult plJoltClothSolverSetup::Build(const plJoltClothDescriptor& desc, const 
   pSettings->Optimize();
 
   m_uiNumConstraints = static_cast<plUInt32>(pSettings->mEdgeConstraints.size() + pSettings->mLRAConstraints.size() + pSettings->mSkinnedConstraints.size());
+
+  // The edges for the stretch limit, sorted by how many edges their near end is away from a pinned particle.
+  {
+    m_LimitEdges.Clear();
+
+    plHashSet<plUInt64> seen;
+    plDynamicArray<plDynamicArray<plUInt32>> neighbors;
+    neighbors.SetCount(uiParticles);
+
+    for (plUInt32 i = 0; i + 2 < desc.m_Indices.GetCount(); i += 3)
+    {
+      for (plUInt32 e = 0; e < 3; ++e)
+      {
+        const plUInt32 a = desc.m_Indices[i + e];
+        const plUInt32 b = desc.m_Indices[i + (e + 1) % 3];
+
+        if (a == b || seen.Insert((static_cast<plUInt64>(plMath::Min(a, b)) << 32) | plMath::Max(a, b)))
+          continue;
+
+        neighbors[a].PushBack(b);
+        neighbors[b].PushBack(a);
+      }
+    }
+
+    // breadth first from the pinned particles; a piece without a pin has nothing to hang from and is left alone
+    plDynamicArray<plUInt32> depth;
+    depth.SetCount(uiParticles, plInvalidIndex);
+
+    plDynamicArray<plUInt32> queue;
+    for (plUInt32 p = 0; p < uiParticles; ++p)
+    {
+      if (desc.m_MaxDistance[p] <= 0.0f)
+      {
+        depth[p] = 0;
+        queue.PushBack(p);
+      }
+    }
+
+    for (plUInt32 q = 0; q < queue.GetCount(); ++q)
+    {
+      const plUInt32 p = queue[q];
+
+      for (plUInt32 n : neighbors[p])
+      {
+        if (depth[n] == plInvalidIndex)
+        {
+          depth[n] = depth[p] + 1;
+          queue.PushBack(n);
+        }
+      }
+    }
+
+    // Ring by ring outward from the pins. A ring is the particles of one depth: first the edges that reach it from
+    // the ring before, then the edges along the ring, then the edges from the ring before once more, because the
+    // edges along the ring move both of their ends.
+    plDynamicArray<plDynamicArray<LimitEdge>> inward;
+    plDynamicArray<plDynamicArray<LimitEdge>> along;
+
+    for (plUInt32 p : queue)
+    {
+      for (plUInt32 n : neighbors[p])
+      {
+        if (depth[n] < depth[p] || (depth[n] == depth[p] && n < p) || desc.m_MaxDistance[n] <= 0.0f)
+          continue;
+
+        LimitEdge edge;
+        edge.m_uiNear = p;
+        edge.m_uiFar = n;
+        edge.m_fRestLength = (simPositions[p] - simPositions[n]).GetLength();
+        edge.m_bSameDepth = depth[n] == depth[p];
+
+        plDynamicArray<plDynamicArray<LimitEdge>>& rings = edge.m_bSameDepth ? along : inward;
+        if (rings.GetCount() <= depth[n])
+          rings.SetCount(depth[n] + 1);
+
+        rings[depth[n]].PushBack(edge);
+      }
+    }
+
+    for (plUInt32 uiRing = 0; uiRing < plMath::Max(inward.GetCount(), along.GetCount()); ++uiRing)
+    {
+      if (uiRing < inward.GetCount())
+        m_LimitEdges.PushBackRange(inward[uiRing]);
+
+      if (uiRing < along.GetCount() && !along[uiRing].IsEmpty())
+      {
+        // a ring that is too long all the way round takes a few passes to draw in
+        for (plUInt32 uiPass = 0; uiPass < 3; ++uiPass)
+        {
+          m_LimitEdges.PushBackRange(along[uiRing]);
+
+          if (uiRing < inward.GetCount())
+            m_LimitEdges.PushBackRange(inward[uiRing]);
+        }
+      }
+    }
+  }
 
   if (m_pSettings != nullptr)
     m_pSettings->Release();
@@ -515,6 +613,56 @@ void plJoltClothInstance::ClampToEnvelope(float fMaxDistanceScale)
   }
 }
 
+void plJoltClothInstance::LimitStretch(float fLimit)
+{
+  // A solver with a handful of iterations lets a long garment stretch like rubber when it is pulled hard: in a
+  // sprint, a spin or a hard stop. Walking the edges once outward from the pins and pulling the far end of every
+  // edge that is too long back in ends that, because each edge is put right after the ones that hold its near end.
+  if (fLimit <= 0.0f)
+    return;
+
+  auto* pMotion = static_cast<JPH::SoftBodyMotionProperties*>(m_pBody->GetMotionProperties());
+  JPH::Array<JPH::SoftBodyVertex>& vertices = pMotion->GetVertices();
+
+  for (const plJoltClothSolverSetup::LimitEdge& edge : m_pSetup->m_LimitEdges)
+  {
+    JPH::SoftBodyVertex& nearEnd = vertices[edge.m_uiNear];
+    JPH::SoftBodyVertex& farEnd = vertices[edge.m_uiFar];
+
+    const JPH::Vec3 delta = farEnd.mPosition - nearEnd.mPosition;
+    const float fLength = delta.Length();
+    const float fLongest = edge.m_fRestLength * (1.0f + fLimit);
+
+    if (fLength <= fLongest || fLength < 1.0e-6f)
+      continue;
+
+    const JPH::Vec3 along = delta / fLength;
+    const float fTooLong = fLength - fLongest;
+
+    // the ends may not go on moving apart either
+    const float fApart = (farEnd.mVelocity - nearEnd.mVelocity).Dot(along);
+
+    if (edge.m_bSameDepth && nearEnd.mInvMass > 0.0f)
+    {
+      nearEnd.mPosition += along * (fTooLong * 0.5f);
+      farEnd.mPosition -= along * (fTooLong * 0.5f);
+
+      if (fApart > 0.0f)
+      {
+        nearEnd.mVelocity += along * (fApart * 0.5f);
+        farEnd.mVelocity -= along * (fApart * 0.5f);
+      }
+    }
+    else
+    {
+      farEnd.mPosition -= along * fTooLong;
+
+      if (fApart > 0.0f)
+        farEnd.mVelocity -= along * fApart;
+    }
+  }
+}
+
 void plJoltClothInstance::FollowOwner(const StepInput& input, bool bKeepShape)
 {
   // The body origin moved with the character, so the particles went along. What the cloth feels of that is the
@@ -700,7 +848,14 @@ void plJoltClothInstance::Step(const StepInput& input)
   pMotion->SetGravityFactor(input.m_fGravityFactor * simulation.m_fGravityFactor);
   pMotion->CustomUpdate(input.m_fTimeStep, *m_pBody, *m_pModule->GetJoltSystem());
 
-  ClampToEnvelope(fMaxDistanceScale);
+  // The envelope has the last word, so that no particle ends a step outside it. Pulling a particle back into its
+  // envelope can lengthen an edge again, and so can an edge between two particles that are equally far from the
+  // pins; a few rounds settle most of that.
+  for (plUInt32 uiRound = 0; uiRound < 4; ++uiRound)
+  {
+    LimitStretch(simulation.m_fStretchLimit);
+    ClampToEnvelope(fMaxDistanceScale);
+  }
 
   m_vLastOwnerPosition = input.m_vOwnerPosition;
   m_qLastOwnerRotation = input.m_qOwnerRotation;

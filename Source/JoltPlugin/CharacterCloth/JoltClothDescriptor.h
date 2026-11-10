@@ -46,6 +46,10 @@ struct PL_JOLTPLUGIN_DLL plJoltClothCollider
   float m_fLength = 0.2f;                    ///< capsule: distance between the two sphere centres
   plVec3 m_vHalfExtents = plVec3(0.05f);     ///< box
 
+  /// How much of the radius and the half extents is the garment's Collider Inflate. The body itself ends that much
+  /// further in, which is what the stress test measures against.
+  float m_fInflate = 0.0f;
+
   /// Where the joint is in the bind pose, in the bind space of the cloth. The simulation never reads it: tools use
   /// it to place the collider when there is no pose, such as the stress test's motion script.
   plTransform m_JointBindPose = plTransform::MakeIdentity();
@@ -71,6 +75,7 @@ struct PL_JOLTPLUGIN_DLL plJoltClothSimulationSettings
   plUInt8 m_uiIterations = 8; ///< solver sub steps per step at the step rate
   bool m_bTethers = true;     ///< long-range attachments that stop free vertices from drifting away from the pinned ones
   float m_fTetherSlack = 1.03f;
+  float m_fStretchLimit = 0.08f; ///< how much longer than at rest an edge may end a step: 0.08 is 8 percent. 0 does not limit.
   plEnum<plJoltClothWorldCollision> m_WorldCollision;
   float m_fGravityFactor = 1.0f;
   float m_fFullRateDistance = 14.0f; ///< metres from the camera up to which the garment steps every frame
