@@ -6,6 +6,8 @@
 #include <EditorFramework/Actions/ProjectActions.h>
 #include <EditorFramework/Actions/ViewActions.h>
 #include <EditorPluginJolt/Actions/JoltActions.h>
+#include <EditorPluginJolt/ClothAsset/JoltClothActions.h>
+#include <EditorPluginJolt/ClothAsset/JoltClothAssetObjects.h>
 #include <EditorPluginJolt/CollisionMeshAsset/JoltCollisionMeshAssetObjects.h>
 #include <EditorPluginJolt/Dialogs/JoltProjectSettingsEngineDlg.h>
 #include <EditorUi/Widgets.h>
@@ -31,6 +33,7 @@ void plRagdollComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& 
 void plCharacterControllerComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& e);
 void plRopeComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& e);
 void plClothSheetComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& e);
+void plCharacterClothComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& e);
 
 /// The package's icon folder: the icons under their ids (":/TypeIcons/plJoltRopeComponent.svg" is
 /// "EditorIcons/TypeIcons/plJoltRopeComponent.svg"). The plugin binary lives in <package>/Bin/<configuration>.
@@ -97,6 +100,44 @@ void OnLoadPlugin()
     }
   }
 
+  // Cloth
+  {
+    plPropertyMetaState::GetSingleton()->m_Events.AddEventHandler(plJoltClothAssetProperties::PropertyMetaStateEventHandler);
+
+    plJoltClothActions::RegisterActions();
+
+    // Menu Bar: the same menus as every other asset window
+    {
+      plActionMapManager::RegisterActionMap("JoltClothAssetMenuBar").IgnoreResult();
+
+      plStandardMenus::MapActions("JoltClothAssetMenuBar", plStandardMenuTypes::Default | plStandardMenuTypes::Edit);
+      plProjectActions::MapActions("JoltClothAssetMenuBar");
+      plDocumentActions::MapMenuActions("JoltClothAssetMenuBar");
+      plAssetActions::MapMenuActions("JoltClothAssetMenuBar");
+      plCommandHistoryActions::MapActions("JoltClothAssetMenuBar");
+      plEditActions::MapActions("JoltClothAssetMenuBar", false, false);
+    }
+
+    // Tool Bar: save, undo, redo and transform, the preview's playback, then the paint tools
+    {
+      plActionMapManager::RegisterActionMap("JoltClothAssetToolBar").IgnoreResult();
+      plDocumentActions::MapToolbarActions("JoltClothAssetToolBar");
+      plCommandHistoryActions::MapActions("JoltClothAssetToolBar", "");
+      plAssetActions::MapToolBarActions("JoltClothAssetToolBar", true);
+      plCommonAssetActions::MapToolbarActions("JoltClothAssetToolBar", plCommonAssetUiState::Pause | plCommonAssetUiState::Restart | plCommonAssetUiState::SimulationSpeed | plCommonAssetUiState::Grid);
+      plJoltClothActions::MapToolBarActions("JoltClothAssetToolBar");
+      plCameraModeSwitchActions::MapToolbarActions("JoltClothAssetToolBar");
+    }
+
+    // View Tool Bar
+    {
+      plActionMapManager::RegisterActionMap("JoltClothAssetViewToolBar").IgnoreResult();
+      plViewActions::MapToolbarActions("JoltClothAssetViewToolBar", plViewActions::RenderMode);
+      plJoltClothActions::MapViewToolBarActions("JoltClothAssetViewToolBar");
+      plJoltAssetViewActions::MapViewToolBarActions("JoltClothAssetViewToolBar", false);
+    }
+  }
+
   // Destructible Mesh
   {
     // Menu Bar
@@ -136,6 +177,7 @@ void OnLoadPlugin()
     {
       plJoltActions::RegisterActions();
       plJoltActions::MapMenuActions();
+      plJoltClothActions::MapSceneMenuActions();
     }
 
     // Tool Bar
@@ -149,6 +191,7 @@ void OnLoadPlugin()
   plPropertyMetaState::GetSingleton()->m_Events.AddEventHandler(plCharacterControllerComponent_PropertyMetaStateEventHandler);
   plPropertyMetaState::GetSingleton()->m_Events.AddEventHandler(plRopeComponent_PropertyMetaStateEventHandler);
   plPropertyMetaState::GetSingleton()->m_Events.AddEventHandler(plClothSheetComponent_PropertyMetaStateEventHandler);
+  plPropertyMetaState::GetSingleton()->m_Events.AddEventHandler(plCharacterClothComponent_PropertyMetaStateEventHandler);
 }
 
 void OnUnloadPlugin()
@@ -158,11 +201,14 @@ void OnUnloadPlugin()
   plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plCharacterControllerComponent_PropertyMetaStateEventHandler);
   plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plRopeComponent_PropertyMetaStateEventHandler);
   plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plClothSheetComponent_PropertyMetaStateEventHandler);
+  plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plCharacterClothComponent_PropertyMetaStateEventHandler);
 
   plJoltActions::UnregisterActions();
   plJoltAssetViewActions::UnregisterActions();
+  plJoltClothActions::UnregisterActions();
   plToolsProject::GetSingleton()->s_Events.RemoveEventHandler(ToolsProjectEventHandler);
   plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plJoltCollisionMeshAssetProperties::PropertyMetaStateEventHandler);
+  plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plJoltClothAssetProperties::PropertyMetaStateEventHandler);
 
   UnregisterIconFolder();
 }
@@ -348,6 +394,21 @@ void plClothSheetComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEven
     return;
 
   plJoltWeightComponent_PropertyMetaStateEventHandler(e);
+}
+
+void plCharacterClothComponent_PropertyMetaStateEventHandler(plPropertyMetaStateEvent& e)
+{
+  static const plRTTI* pRtti = plRTTI::FindTypeByName("plJoltCharacterClothComponent");
+  PL_ASSERT_DEBUG(pRtti != nullptr, "Did the typename change?");
+
+  if (e.m_pObject->GetTypeAccessor().GetType() != pRtti)
+    return;
+
+  auto& props = *e.m_pPropertyStates;
+
+  // The values of plJoltClothWorldCollisionMode: 1 is Off. Without world collision the layer is not used.
+  const plInt64 iWorldCollision = e.m_pObject->GetTypeAccessor().GetValue("WorldCollision").ConvertTo<plInt64>();
+  props["CollisionLayer"].m_Visibility = iWorldCollision == 1 ? plPropertyUiState::Invisible : plPropertyUiState::Default;
 }
 
 

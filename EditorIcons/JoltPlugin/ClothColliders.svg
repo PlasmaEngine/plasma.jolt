@@ -1,0 +1,7 @@
+<svg width="800px" height="800px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="#ffffff">
+  <!-- a capsule -->
+  <rect x="4" y="4" width="7" height="16" rx="3.5" stroke="#ffffff" stroke-width="1.8"/>
+  <!-- cloth draped next to it -->
+  <path d="M14.5 4.5C16.5 8 13.5 11 15.5 14.5C16.8 16.8 15.2 18.4 16 20" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M19 4.5C21 8 18 11 20 14.5C21.3 16.8 19.7 18.4 20.5 20" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

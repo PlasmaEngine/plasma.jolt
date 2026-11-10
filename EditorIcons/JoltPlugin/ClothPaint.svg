@@ -1,0 +1,8 @@
+<svg width="800px" height="800px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="#ffffff">
+  <!-- brush handle -->
+  <path d="M20 4L11.5 12.5" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- ferrule -->
+  <path d="M10.2 11.2L12.8 13.8" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- bristles with a drop of paint -->
+  <path d="M10 13C7.4 13 6.4 15 6.4 16.6C6.4 18 5.4 18.8 4 19.2C6 20.6 11 20.4 11 15.6" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
