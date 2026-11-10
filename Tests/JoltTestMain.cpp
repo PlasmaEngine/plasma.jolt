@@ -3,6 +3,10 @@
 #include <cstdlib>
 #include <cstring>
 
+#if PL_DISABLED(PL_PLATFORM_WINDOWS)
+#  include <unistd.h>
+#endif
+
 /// \brief Command line:
 ///   JoltTests.exe [--group <name>] [--strict] [--stress <seconds>]
 ///   JoltTests.exe --cloth-stress <file.plBinJoltCloth> [--baseline <file>] [--write-baseline]
@@ -111,6 +115,10 @@ int main(int argc, char** argv)
   // and skipping it makes the leak tracker assert instead, also from the plugin's DLL detach. The tests are done, so end
   // the process without running either.
   std::fflush(stdout);
+#if PL_ENABLED(PL_PLATFORM_WINDOWS)
   TerminateProcess(GetCurrentProcess(), static_cast<UINT>(iExitCode));
+#else
+  _exit(iExitCode);
+#endif
   return iExitCode;
 }

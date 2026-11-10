@@ -228,6 +228,14 @@ public static class PlasmaPackageSdk
             rules.PublicDefinitions.Add("BUILDSYSTEM_ENABLE_DUKTAPE_SUPPORT");
             rules.PublicDefinitions.Add("BUILDSYSTEM_ENABLE_NRD_SUPPORT");
         }
+
+        // Windows and input come from GLFW on Linux and macOS (Foundation's module rules), and the window handle type
+        // depends on it: without the define a package sees engine classes that hold a window handle at another size.
+        if (context.Platform == TargetPlatform.Linux || context.Platform == TargetPlatform.Mac)
+        {
+            rules.PublicDefinitions.Add("BUILDSYSTEM_ENABLE_GLFW_SUPPORT");
+            rules.PublicDefinitions.Add("GLFW_INCLUDE_NONE");
+        }
     }
 
     /// \brief Binds to another plugin shipped by this same package.
