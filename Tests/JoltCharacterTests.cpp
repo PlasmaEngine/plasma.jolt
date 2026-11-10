@@ -179,7 +179,7 @@ static void TestMovingPlatformCarriesCharacter()
 
   const float fPlatformX = walker.m_World.GetPosition(pPlatform->GetHandle()).x;
   Check(fPlatformX > 2.5f, "the platform moved");
-  CheckNear(walker.Position().x - fStartX, 3.0f, 0.6f, "the character rides the moving platform", Category::R1Gate);
+  CheckNear(walker.Position().x - fStartX, 3.0f, 0.6f, "the character rides the moving platform");
 }
 
 /// Teleporting a character puts it at the new position and keeps it on the ground there.
@@ -197,20 +197,48 @@ static void TestTeleport()
   walker.m_World.Step(60);
 
   const plVec3 vPos = walker.Position();
-  CheckNear(vPos.x, 20.0f, 0.2f, "the character arrived at the teleport target", Category::R1Gate);
-  Check(walker.IsOnGround(), "the character is on the ground after teleporting", Category::R1Gate);
+  CheckNear(vPos.x, 20.0f, 0.2f, "the character arrived at the teleport target");
+  Check(walker.IsOnGround(), "the character is on the ground after teleporting");
 }
 
-void RunCharacterTests()
-{
-  BeginGroup("Character");
+PL_CREATE_SIMPLE_TEST_GROUP(JoltCharacter);
 
+PL_CREATE_SIMPLE_TEST(JoltCharacter, StandsOnFloor)
+{
   TestStandsOnFloor();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltCharacter, WalksForward)
+{
   TestWalksForward();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltCharacter, StepsUp)
+{
   TestStepsUp();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltCharacter, HighStepBlocks)
+{
   TestHighStepBlocks();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltCharacter, WalksUpGentleSlope)
+{
   TestWalksUpGentleSlope();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltCharacter, SteepSlopeBlocks)
+{
   TestSteepSlopeBlocks();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltCharacter, MovingPlatformCarriesCharacter)
+{
   TestMovingPlatformCarriesCharacter();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltCharacter, Teleport)
+{
   TestTeleport();
 }

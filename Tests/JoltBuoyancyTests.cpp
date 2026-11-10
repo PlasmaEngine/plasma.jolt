@@ -126,16 +126,20 @@ static void TestBuoyancyIsFrameRateIndependent()
     fLate[i] = boat.Height();
   }
 
-  CheckNear(fEarly[0], fEarly[1], 0.15f, "boat height after 1 s agrees at 30 and 60 fps", Category::R1Gate);
-  CheckNear(fEarly[2], fEarly[1], 0.15f, "boat height after 1 s agrees at 144 and 60 fps", Category::R1Gate);
-  CheckNear(fLate[0], fLate[1], 0.05f, "resting boat height agrees at 30 and 60 fps", Category::R1Gate);
-  CheckNear(fLate[2], fLate[1], 0.05f, "resting boat height agrees at 144 and 60 fps", Category::R1Gate);
+  CheckNear(fEarly[0], fEarly[1], 0.15f, "boat height after 1 s agrees at 30 and 60 fps");
+  CheckNear(fEarly[2], fEarly[1], 0.15f, "boat height after 1 s agrees at 144 and 60 fps");
+  CheckNear(fLate[0], fLate[1], 0.05f, "resting boat height agrees at 30 and 60 fps");
+  CheckNear(fLate[2], fLate[1], 0.05f, "resting boat height agrees at 144 and 60 fps");
 }
 
-void RunBuoyancyTests()
-{
-  BeginGroup("Buoyancy");
+PL_CREATE_SIMPLE_TEST_GROUP(JoltBuoyancy);
 
+PL_CREATE_SIMPLE_TEST(JoltBuoyancy, BoatFloats)
+{
   TestBoatFloats();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltBuoyancy, BuoyancyIsFrameRateIndependent)
+{
   TestBuoyancyIsFrameRateIndependent();
 }

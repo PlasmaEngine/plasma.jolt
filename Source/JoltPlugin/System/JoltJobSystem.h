@@ -9,6 +9,9 @@ class plJoltJobSystem final : public JPH::JobSystemWithBarrier
 public:
   plJoltJobSystem(plUInt32 uiMaxJobs, plUInt32 uiMaxBarriers);
 
+  /// Waits for the completion callbacks of all started jobs, which run on worker threads after the job itself has finished.
+  ~plJoltJobSystem();
+
   virtual int GetMaxConcurrency() const override;
   virtual JPH::JobHandle CreateJob(const char* szName, JPH::ColorArg color, const JobFunction& jobFunction, plUInt32 uiNumDependencies = 0) override;
 
@@ -43,4 +46,5 @@ private:
   AvailableJobs m_Jobs;
 
   plDynamicArray<plSharedPtr<plJoltTask>> m_Tasks;
+  plDynamicArray<plTaskGroupID> m_TaskGroups;
 };

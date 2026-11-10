@@ -1,53 +1,108 @@
 #include "JoltTestSupport.h"
+#include <Foundation/Utilities/CommandLineOptions.h>
+#include <set>
+#include <string>
+
+plCommandLineOptionBool opt_JoltStrictDefects("_JoltTest", "-joltStrictDefects", "Open defect checks fail the run when they fail.", false);
 
 namespace JoltTest
 {
-  static Totals s_Totals;
-  static const char* s_szGroup = "";
-
-  void BeginGroup(const char* szName)
+  namespace
   {
-    s_szGroup = szName;
-    std::printf("[ %s ]\n", szName);
+    /// Prints the bug ids that still had a failing open defect check when the process ends.
+    struct OpenDefectList
+    {
+      std::set<std::string> m_Open;
+
+      ~OpenDefectList()
+      {
+        if (m_Open.empty())
+          return;
+
+        std::string sList;
+        for (const std::string& sId : m_Open)
+          sList += (sList.empty() ? "" : ", ") + sId;
+
+        std::printf("Open defects: %s\n", sList.c_str());
+      }
+    };
+
+    OpenDefectList s_OpenDefects;
+  } // namespace
+
+  void Check(bool bValue, const char* szMessage, std::source_location location)
+  {
+    plTestBool(bValue, "Test failed", location.file_name(), static_cast<plInt32>(location.line()), location.function_name(), "%s", szMessage);
   }
 
-  void Check(bool bValue, const char* szMessage, Category category)
-  {
-    ++s_Totals.m_uiChecks;
-
-    if (bValue)
-      return;
-
-    if (category == Category::R1Gate)
-    {
-      ++s_Totals.m_uiOpenR1Items;
-      std::printf("OPEN R1: %s: %s\n", s_szGroup, szMessage);
-    }
-    else
-    {
-      ++s_Totals.m_uiFailures;
-      std::printf("FAIL: %s: %s\n", s_szGroup, szMessage);
-    }
-  }
-
-  void CheckNear(float fActual, float fExpected, float fTolerance, const char* szMessage, Category category)
+  void CheckNear(float fActual, float fExpected, float fTolerance, const char* szMessage, std::source_location location)
   {
     const bool bOk = plMath::Abs(fActual - fExpected) <= fTolerance;
 
     if (!bOk)
-      std::printf("  %s: got %.4f, expected %.4f +- %.4f\n", szMessage, fActual, fExpected, fTolerance);
+      plTestFramework::Output(plTestOutput::Error, "%s: got %.4f, expected %.4f +- %.4f", szMessage, fActual, fExpected, fTolerance);
 
-    Check(bOk, szMessage, category);
+    Check(bOk, szMessage, location);
   }
 
-  const Totals& GetTotals()
+  void OpenDefect(const char* szBugId, bool bValue, const char* szMessage, std::source_location location)
   {
-    return s_Totals;
+    if (bValue)
+    {
+      plTestFramework::Output(plTestOutput::Warning, "%s now passes, turn it into a regular check: %s", szBugId, szMessage);
+      return;
+    }
+
+    if (opt_JoltStrictDefects.GetOptionValue(plCommandLineOption::LogMode::Never))
+    {
+      Check(false, szMessage, location);
+      return;
+    }
+
+    s_OpenDefects.m_Open.insert(szBugId);
+    plTestFramework::Output(plTestOutput::Warning, "OPEN %s: %s (%s:%u)", szBugId, szMessage, location.file_name(), location.line());
   }
+
+  void OpenDefectNear(const char* szBugId, float fActual, float fExpected, float fTolerance, const char* szMessage, std::source_location location)
+  {
+    const bool bOk = plMath::Abs(fActual - fExpected) <= fTolerance;
+
+    if (!bOk)
+      plTestFramework::Output(plTestOutput::Warning, "  %s: got %.4f, expected %.4f +- %.4f", szMessage, fActual, fExpected, fTolerance);
+
+    OpenDefect(szBugId, bOk, szMessage, location);
+  }
+
+  namespace
+  {
+    plAssertHandler s_PreviousAssertHandler = nullptr;
+
+    /// Unloading the resources that core systems start up with, which happens whenever a sub-test ends, asks the renderer for its
+    /// device. These tests have none, and the Debug configuration asserts. That one message is dropped, every other assert is passed on.
+    bool AssertHandler(const char* szSourceFile, plUInt32 uiLine, const char* szFunction, const char* szExpression, const char* szAssertMsg)
+    {
+      if (plStringUtils::IsEqual(szFunction, "plGALDevice::GetDefaultDevice"))
+        return false;
+
+      return s_PreviousAssertHandler(szSourceFile, uiLine, szFunction, szExpression, szAssertMsg);
+    }
+
+    void InstallAssertHandler()
+    {
+      // after the test framework has installed its own handler, so this one is only set up with the first world
+      if (s_PreviousAssertHandler == nullptr)
+      {
+        s_PreviousAssertHandler = plGetAssertHandler();
+        plSetAssertHandler(AssertHandler);
+      }
+    }
+  } // namespace
 
   World::World(float fFrameRate)
     : m_fFrameRate(fFrameRate)
   {
+    InstallAssertHandler();
+
     plWorldDesc desc("JoltTests");
     m_pWorld = PL_DEFAULT_NEW(plWorld, desc);
 
@@ -162,16 +217,5 @@ namespace JoltTest
       actors.Insert(result.m_hActorObject);
 
     return actors.GetCount();
-  }
-
-  void Startup()
-  {
-    // the high level systems bring up the renderer, which needs a GPU device; Jolt starts with the core systems
-    plStartup::StartupCoreSystems();
-  }
-
-  void Shutdown()
-  {
-    plStartup::ShutdownCoreSystems();
   }
 } // namespace JoltTest

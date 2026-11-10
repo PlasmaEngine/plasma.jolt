@@ -1,4 +1,5 @@
 #include "JoltTestSupport.h"
+#include <TestFramework/Utilities/TestLogInterface.h>
 #include <JoltPlugin/Shapes/JoltShapeCapsuleComponent.h>
 #include <JoltPlugin/System/JoltTempAlloc.h>
 
@@ -173,20 +174,46 @@ static void TestGravityIsReported()
   World test;
 
   const plVec3 vGravity = test.GetJolt().GetGravity();
-  CheckNear(vGravity.z, test.GetJolt().GetObjectGravity().z, 0.001f, "GetGravity() returns the configured object gravity", Category::R1Gate);
+  OpenDefectNear("PH-B12", vGravity.z, test.GetJolt().GetObjectGravity().z, 0.001f, "GetGravity() returns the configured object gravity");
 
   test.GetJolt().SetGravity(plVec3(0, 0, -3.0f), plVec3(0, 0, -3.0f));
-  CheckNear(test.GetJolt().GetGravity().z, -3.0f, 0.001f, "GetGravity() follows SetGravity()", Category::R1Gate);
+  OpenDefectNear("PH-B12", test.GetJolt().GetGravity().z, -3.0f, 0.001f, "GetGravity() follows SetGravity()");
 }
 
-void RunP0Regressions()
-{
-  BeginGroup("P0 regressions");
+PL_CREATE_SIMPLE_TEST_GROUP(JoltP0);
 
+PL_CREATE_SIMPLE_TEST(JoltP0, TempAllocatorUnwinding)
+{
   TestTempAllocatorUnwinding();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltP0, RaycastAllBeyond256Hits)
+{
   TestRaycastAllBeyond256Hits();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltP0, CapsuleDimensions)
+{
+  // the invalid capsule is rejected, which leaves its actor without a shape
+  plTestLogInterface log;
+  plTestLogSystemScope logScope(&log, true);
+  log.ExpectMessage("Capsule collider requires a finite", plLogMsgType::ErrorMsg, 1);
+  log.ExpectMessage("has no valid shape", plLogMsgType::ErrorMsg, 1);
+
   TestCapsuleDimensions();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltP0, UndeliverableImpulsesAreRetired)
+{
   TestUndeliverableImpulsesAreRetired();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltP0, ActorTeardownKeepsWorldStable)
+{
   TestActorTeardownKeepsWorldStable();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltP0, GravityIsReported)
+{
   TestGravityIsReported();
 }

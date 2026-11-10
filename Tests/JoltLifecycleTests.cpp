@@ -1,4 +1,5 @@
 #include "JoltTestSupport.h"
+#include <TestFramework/Utilities/TestLogInterface.h>
 #include <JoltPlugin/Components/JoltRagdollComponent.h>
 
 using namespace JoltTest;
@@ -110,12 +111,29 @@ static void TestWorldTeardownWithLiveBodies()
   Check(true, "worlds with live bodies shut down without a crash");
 }
 
-void RunLifecycleTests()
-{
-  BeginGroup("Lifecycle");
+PL_CREATE_SIMPLE_TEST_GROUP(JoltLifecycle);
 
+PL_CREATE_SIMPLE_TEST(JoltLifecycle, ActorChurn)
+{
   TestActorChurn();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltLifecycle, DeletingSleepingActors)
+{
   TestDeletingSleepingActors();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltLifecycle, RagdollComponentChurn)
+{
+  // the components have no skeleton, so every one of the 10 rounds of 8 reports it
+  plTestLogInterface log;
+  plTestLogSystemScope logScope(&log, true);
+  log.ExpectMessage("No skeleton available for ragdoll", plLogMsgType::ErrorMsg, 80);
+
   TestRagdollComponentChurn();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltLifecycle, WorldTeardownWithLiveBodies)
+{
   TestWorldTeardownWithLiveBodies();
 }

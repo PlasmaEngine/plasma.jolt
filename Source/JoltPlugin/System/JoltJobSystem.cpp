@@ -10,10 +10,20 @@ plJoltJobSystem::plJoltJobSystem(plUInt32 uiMaxJobs, plUInt32 uiMaxBarriers)
   m_Jobs.Init(uiMaxJobs, uiMaxJobs);
 
   m_Tasks.SetCount(uiMaxJobs);
+  m_TaskGroups.SetCount(uiMaxJobs);
   for (plUInt32 i = 0; i < m_Tasks.GetCount(); ++i)
   {
     m_Tasks[i] = PL_DEFAULT_NEW(plJoltTask);
     m_Tasks[i]->ConfigureTask("Jolt", plTaskNesting::Never, &plJoltJobSystem::OnTaskFinished);
+  }
+}
+
+plJoltJobSystem::~plJoltJobSystem()
+{
+  // the task system runs the finished callback, which releases the job, before it marks the task group as finished
+  for (const plTaskGroupID& group : m_TaskGroups)
+  {
+    plTaskSystem::WaitForGroup(group);
   }
 }
 
@@ -82,7 +92,7 @@ void plJoltJobSystem::QueueJob(Job* pJob)
 
   pTask->m_pJob = pMyJob;
 
-  plTaskSystem::StartSingleTask(pTask, plTaskPriority::EarlyThisFrame);
+  m_TaskGroups[pMyJob->m_uiJobIndex] = plTaskSystem::StartSingleTask(pTask, plTaskPriority::EarlyThisFrame);
 }
 
 void plJoltJobSystem::QueueJobs(Job** pJob, plUInt32 uiNum_Jobs)
