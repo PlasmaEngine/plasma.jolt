@@ -5,11 +5,14 @@
 #include <EditorFramework/InputContexts/CameraMoveContext.h>
 #include <EditorFramework/InputContexts/OrbitCameraContext.h>
 #include <EditorFramework/Preferences/EditorPreferences.h>
+#include <EditorPluginJolt/ClothAsset/JoltClothAssetManager.h>
 #include <EditorPluginJolt/ClothAsset/JoltClothAssetWindow.h>
 #include <EditorUi/Runtime.h>
 #include <Foundation/IO/MemoryStream.h>
 #include <Foundation/IO/OSFile.h>
 #include <Foundation/Utilities/AssetFileHeader.h>
+#include <Foundation/Utilities/ConversionUtils.h>
+#include <GuiFoundation/PropertyGrid/ManipulatorManager.h>
 #include <GuiFoundation/UIServices/UIServices.h>
 #include <JoltPlugin/CharacterCloth/JoltClothStressTest.h>
 #include <ToolsFoundation/CommandHistory/CommandHistory.h>
@@ -102,6 +105,7 @@ plJoltClothAssetDocumentWindow::plJoltClothAssetDocumentWindow(plJoltClothAssetD
     m_pCameraFlyContext->LoadState();
 
     m_pPaintContext = PL_DEFAULT_NEW(plJoltClothPaintContext, this, m_pViewWidget);
+    m_pHandleContext = PL_DEFAULT_NEW(plSelectionContext, this, m_pViewWidget, &m_ViewConfig.m_Camera);
 
     m_pViewWidget->SetToolBarActions("JoltClothAssetViewToolBar");
   }
@@ -110,6 +114,7 @@ plJoltClothAssetDocumentWindow::plJoltClothAssetDocumentWindow(plJoltClothAssetD
   pDocument->GetSelectionManager()->SetSelection(pDocument->GetObjectManager()->GetRootObject()->GetChildren()[0]);
 
   GetDocument()->GetCommandHistory()->m_Events.AddEventHandler(plMakeDelegate(&plJoltClothAssetDocumentWindow::CommandEventHandler, this));
+  GetDocument()->m_EventsOne.AddEventHandler(plMakeDelegate(&plJoltClothAssetDocumentWindow::DocumentSavedHandler, this));
 
   SendLiveResourcePreview();
 }
@@ -117,6 +122,7 @@ plJoltClothAssetDocumentWindow::plJoltClothAssetDocumentWindow(plJoltClothAssetD
 plJoltClothAssetDocumentWindow::~plJoltClothAssetDocumentWindow()
 {
   GetDocument()->GetCommandHistory()->m_Events.RemoveEventHandler(plMakeDelegate(&plJoltClothAssetDocumentWindow::CommandEventHandler, this));
+  GetDocument()->m_EventsOne.RemoveEventHandler(plMakeDelegate(&plJoltClothAssetDocumentWindow::DocumentSavedHandler, this));
 
   // the view owns no input context: they go before it
   m_pViewWidget->m_InputContexts.Clear();
@@ -142,9 +148,13 @@ void plJoltClothAssetDocumentWindow::UpdateInputContexts()
 {
   m_pViewWidget->m_InputContexts.Clear();
 
-  // the paint tool sees the mouse first and leaves the camera what it does not use
-  if (m_PaintTool != plJoltClothPaintTool::Off)
+  // the paint tool, the drag test and the stress timeline see the mouse first and leave the camera what they do not use
+  if (m_PaintTool != plJoltClothPaintTool::Off || m_bDragTest || m_bStressShown)
     m_pViewWidget->m_InputContexts.PushBack(m_pPaintContext.Borrow());
+
+  // grabs the collider handles
+  if (m_bHandlesShown)
+    m_pViewWidget->m_InputContexts.PushBack(m_pHandleContext.Borrow());
 
   if (m_iCameraMode == 0)
     m_pViewWidget->m_InputContexts.PushBack(m_pViewWidget->GetOrbitCamera());
@@ -164,7 +174,68 @@ void plJoltClothAssetDocumentWindow::SetPaintTool(plJoltClothPaintTool::Enum too
   m_bBrushVisible = false;
   m_bPaintValuesDirty = true;
 
+  // painting happens on the bind pose, where there is nothing to drag
+  if (m_PaintTool != plJoltClothPaintTool::Off)
+  {
+    m_bDragTest = false;
+    m_vDragOffset.SetZero();
+  }
+
   UpdateInputContexts();
+}
+
+void plJoltClothAssetDocumentWindow::SetDragTest(bool bOn)
+{
+  if (m_bDragTest == bOn)
+    return;
+
+  if (bOn)
+    SetPaintTool(plJoltClothPaintTool::Off);
+
+  m_bDragTest = bOn;
+  m_bDragging = false;
+  m_vDragOffset.SetZero();
+
+  UpdateInputContexts();
+}
+
+bool plJoltClothAssetDocumentWindow::PickGround(const plEditorInputEvent& e, plVec3& out_vPosition) const
+{
+  plVec3 vStart, vDirection;
+  if (m_pViewWidget->GetPickingRay(static_cast<plUInt16>(plMath::Max(0.0f, e.m_vPosition.x)), static_cast<plUInt16>(plMath::Max(0.0f, e.m_vPosition.y)), vStart, vDirection).Failed())
+    return false;
+
+  // The plane through the character's hip that faces the camera: the cursor meets it from every camera angle, also
+  // from below hip height. What the character moves by is the part of the drag that runs along the ground.
+  const plVec3 vNormal = m_ViewConfig.m_Camera.GetCenterDirForwards();
+  const plVec3 vHip(0, 0, 1.0f);
+
+  const float fFacing = vDirection.Dot(vNormal);
+  if (fFacing < 1.0e-4f)
+    return false;
+
+  out_vPosition = vStart + vDirection * ((vHip - vStart).Dot(vNormal) / fFacing);
+  return true;
+}
+
+void plJoltClothAssetDocumentWindow::SendPreviewCommand(plStringView sWhat)
+{
+  if (plEditorEngineProcessConnection::GetSingleton()->IsProcessCrashed())
+    return;
+
+  plSimpleDocumentConfigMsgToEngine msg;
+  msg.m_sWhatToDo = sWhat;
+  GetDocument()->SendMessageToEngine(&msg);
+}
+
+void plJoltClothAssetDocumentWindow::Teleport()
+{
+  SendPreviewCommand("Teleport");
+}
+
+void plJoltClothAssetDocumentWindow::TurnTest()
+{
+  SendPreviewCommand("Turn");
 }
 
 void plJoltClothAssetDocumentWindow::SetPaintMap(plJoltClothPaintMap::Enum map)
@@ -187,6 +258,32 @@ void plJoltClothAssetDocumentWindow::SendRedrawMsg()
 
   plJoltClothAssetDocument* pDoc = GetClothDocument();
   const bool bPainting = m_PaintTool != plJoltClothPaintTool::Off;
+
+  {
+    const plHybridArray<plPropertySelection, 8>* pHandles = nullptr;
+    const bool bHandles = plManipulatorManager::GetSingleton()->GetActiveManipulator(pDoc, pHandles) != nullptr && pHandles != nullptr && !pHandles->IsEmpty();
+
+    if (m_bHandlesShown != bHandles)
+    {
+      m_bHandlesShown = bHandles;
+      UpdateInputContexts();
+    }
+
+    if (m_bHandlesShown)
+    {
+      const plVec2 vSize = m_pViewWidget->GetViewportSize();
+      m_pHandleContext->SetWindowConfig(plVec2I32(static_cast<plInt32>(vSize.x), static_cast<plInt32>(vSize.y)));
+
+      // the handles follow the joints as the preview moves them
+      plStringBuilder sJoints;
+      pDoc->GetColliderJoints(sJoints);
+
+      plSimpleDocumentConfigMsgToEngine msg;
+      msg.m_sWhatToDo = "JointTransforms";
+      msg.m_sPayload = sJoints;
+      pDoc->SendMessageToEngine(&msg);
+    }
+  }
 
   {
     plSimpleDocumentConfigMsgToEngine msg;
@@ -225,6 +322,17 @@ void plJoltClothAssetDocumentWindow::SendRedrawMsg()
   }
 
   {
+    // how far the drag test pulls the character from its place; zero lets it swing back
+    plStringBuilder sOffset;
+    sOffset.SetFormat("{} {}", plArgF(m_vDragOffset.x, 4), plArgF(m_vDragOffset.y, 4));
+
+    plSimpleDocumentConfigMsgToEngine msg;
+    msg.m_sWhatToDo = "DragOffset";
+    msg.m_sPayload = sOffset;
+    pDoc->SendMessageToEngine(&msg);
+  }
+
+  {
     plSimpleDocumentConfigMsgToEngine msg;
     msg.m_sWhatToDo = "SimulationSpeed";
 
@@ -256,7 +364,7 @@ void plJoltClothAssetDocumentWindow::SendRedrawMsg()
 
   for (auto pView : m_ViewWidgets)
   {
-    pView->SetEnablePicking(false);
+    pView->SetEnablePicking(m_bHandlesShown);
     pView->UpdateCameraInterpolation();
     pView->SyncToEngine();
   }
@@ -307,6 +415,50 @@ void plJoltClothAssetDocumentWindow::ProcessMessageEventHandler(const plEditorEn
     return;
   }
 
+  if (const plSimpleDocumentConfigMsgToEditor* pJoints = plDynamicCast<const plSimpleDocumentConfigMsgToEditor*>(pMsg); pJoints != nullptr && pJoints->m_sWhatToDo == "JointTransforms")
+  {
+    // "joint|px py pz qx qy qz qw;" for every joint that carries one of the asset's own colliders
+    plHybridArray<plStringView, 16> entries;
+    pJoints->m_sPayload.GetView().Split(false, entries, ";");
+
+    for (plStringView sEntry : entries)
+    {
+      const char* szSeparator = sEntry.FindSubString("|");
+      if (szSeparator == nullptr)
+        continue;
+
+      plStringBuilder sValues = plStringView(szSeparator + 1, sEntry.GetEndPointer());
+      const char* szText = sValues.GetData();
+
+      double v[7] = {0, 0, 0, 0, 0, 0, 1};
+      bool bValid = true;
+
+      for (double& fValue : v)
+        bValid = bValid && plConversionUtils::StringToFloat(szText, fValue, &szText).Succeeded();
+
+      if (!bValid)
+        continue;
+
+      plQuat qRotation(static_cast<float>(v[3]), static_cast<float>(v[4]), static_cast<float>(v[5]), static_cast<float>(v[6]));
+      qRotation.Normalize();
+
+      GetClothDocument()->SetJointTransform(plStringView(sEntry.GetStartPointer(), szSeparator), plTransform(plVec3(static_cast<float>(v[0]), static_cast<float>(v[1]), static_cast<float>(v[2])), qRotation));
+    }
+
+    return;
+  }
+
+  if (const plSimpleDocumentConfigMsgToEditor* pShown = plDynamicCast<const plSimpleDocumentConfigMsgToEditor*>(pMsg); pShown != nullptr && pShown->m_sWhatToDo == "StressFrameShown")
+  {
+    // the frame is on screen: go on to the one the mouse has reached since
+    m_bStressFramePending = false;
+
+    if (m_bStressShown && m_fStressFrameWanted != m_fStressFrameAsked)
+      ShowStressFrame(m_fStressFrameWanted);
+
+    return;
+  }
+
   if (const plSimpleDocumentConfigMsgToEditor* pResult = plDynamicCast<const plSimpleDocumentConfigMsgToEditor*>(pMsg); pResult != nullptr && pResult->m_sWhatToDo == "StressResult")
   {
     ShowStressResult(pResult->m_sPayload, pResult->m_PayloadValue);
@@ -321,9 +473,77 @@ void plJoltClothAssetDocumentWindow::RunStressTest()
   if (plEditorEngineProcessConnection::GetSingleton()->IsProcessCrashed())
     return;
 
+  // with a result on screen the button takes it away again
+  if (m_bStressShown)
+  {
+    m_bStressShown = false;
+    m_bStressScrub = false;
+    UpdateInputContexts();
+
+    SendPreviewCommand("StressLeave");
+    return;
+  }
+
+  // the motion script, then the preview clip and the clips listed for the test: "clip|name" entries
+  const plJoltClothAssetProperties* pProp = GetClothDocument()->GetProperties();
+
+  plHybridArray<plString, 8> clips;
+  if (!pProp->m_sPreviewClip.IsEmpty())
+    clips.PushBack(pProp->m_sPreviewClip);
+
+  for (const plString& sClip : pProp->m_StressClips)
+  {
+    if (!sClip.IsEmpty() && !clips.Contains(sClip))
+      clips.PushBack(sClip);
+  }
+
+  plStringBuilder sClips;
+  for (const plString& sClip : clips)
+  {
+    plStringBuilder sName = "clip";
+
+    if (auto asset = plAssetCurator::GetSingleton()->FindSubAsset(sClip); asset.isValid())
+      sName = asset->GetName();
+
+    sClips.AppendWithSeparator(";", sClip, "|", sName);
+  }
+
   // the test runs on what the preview shows, which is the document as it is now
   plSimpleDocumentConfigMsgToEngine msg;
   msg.m_sWhatToDo = "StressTest";
+  msg.m_sPayload = sClips;
+  GetDocument()->SendMessageToEngine(&msg);
+}
+
+bool plJoltClothAssetDocumentWindow::GetStressTimelinePosition(const plEditorInputEvent& e, float& out_fWhere) const
+{
+  // the engine process draws the timeline along the top of the view, one percent in from its sides
+  const plVec2 vSize = m_pViewWidget->GetViewportSize();
+  if (vSize.x < 1.0f || vSize.y < 1.0f)
+    return false;
+
+  out_fWhere = plMath::Saturate((e.m_vPosition.x / vSize.x - 0.01f) / 0.98f);
+  return e.m_vPosition.y <= vSize.y * 0.09f;
+}
+
+void plJoltClothAssetDocumentWindow::ShowStressFrame(float fWhere)
+{
+  if (plEditorEngineProcessConnection::GetSingleton()->IsProcessCrashed())
+    return;
+
+  // The preview plays the test up to the frame, which takes a moment. While it does, only the newest frame that was
+  // asked for is remembered, so that scrubbing does not queue up a test for every mouse move.
+  m_fStressFrameWanted = fWhere;
+
+  if (m_bStressFramePending)
+    return;
+
+  m_bStressFramePending = true;
+  m_fStressFrameAsked = fWhere;
+
+  plSimpleDocumentConfigMsgToEngine msg;
+  msg.m_sWhatToDo = "StressFrame";
+  msg.m_PayloadValue = fWhere;
   GetDocument()->SendMessageToEngine(&msg);
 }
 
@@ -341,6 +561,20 @@ void plJoltClothAssetDocumentWindow::ShowStressResult(plStringView sText, const 
   m_LastStressResult.Clear();
   if (worst.IsA<plDataBuffer>())
     m_LastStressResult = worst.Get<plDataBuffer>();
+
+  // a test that ran left its timeline in the view: the mouse can reach it now
+  m_bStressShown = !m_LastStressResult.IsEmpty();
+  m_fStressScrubbedTo = -1.0f;
+  m_bStressFramePending = false;
+
+  if (m_bStressShown)
+  {
+    m_PaintTool = plJoltClothPaintTool::Off;
+    m_bDragTest = false;
+    m_vDragOffset.SetZero();
+  }
+
+  UpdateInputContexts();
 
   // how the run compares with the baseline that is kept next to the asset
   plJoltClothStressResult result;
@@ -398,6 +632,20 @@ void plJoltClothAssetDocumentWindow::SetStressBaseline()
   }
 
   plLog::Success("Stress baseline written to '{}'.", sFile);
+  plEditorUiServices::MessageBoxInformation(plFmt("The last stress test is the baseline now. It is kept next to the asset:\n{}", plPathUtils::GetFileNameAndExtension(sFile)));
+}
+
+void plJoltClothAssetDocumentWindow::DocumentSavedHandler(const plDocumentEvent& e)
+{
+  if (e.m_Type != plDocumentEvent::Type::DocumentSaved || !m_bCookValid)
+    return;
+
+  // A cloth that cooks is ready to be worn. The question opens once the save is through.
+  const plUuid clothGuid = GetDocument()->GetGuid();
+  const plString sMesh = GetClothDocument()->GetProperties()->m_sMesh;
+
+  plEditorUiRuntime::RunAfterFrame([clothGuid, sMesh]()
+    { plJoltClothAssetDocumentManager::OfferClothComponents(clothGuid, sMesh); });
 }
 
 void plJoltClothAssetDocumentWindow::CommandEventHandler(const plCommandHistoryEvent& e)
@@ -588,6 +836,30 @@ void plJoltClothAssetDocumentWindow::ApplyBrushAt(const plVec3& vBindPosition)
 
 bool plJoltClothAssetDocumentWindow::BeginStroke(const plEditorInputEvent& e)
 {
+  if (m_bStressShown)
+  {
+    // a press on the timeline shows that frame, and dragging scrubs through the test
+    float fWhere = 0.0f;
+    if (!GetStressTimelinePosition(e, fWhere))
+      return false;
+
+    m_bStressScrub = true;
+    ShowStressFrame(fWhere);
+    return true;
+  }
+
+  if (m_bDragTest)
+  {
+    // the drag goes on from wherever the character is, also while it still swings back
+    plVec3 vGround;
+    if (!PickGround(e, vGround))
+      return false;
+
+    m_bDragging = true;
+    m_vDragStart = vGround - m_vDragOffset;
+    return true;
+  }
+
   if (m_PaintTool == plJoltClothPaintTool::Off || !m_bCookValid || m_Topology.m_Positions.IsEmpty())
     return false;
 
@@ -629,6 +901,38 @@ bool plJoltClothAssetDocumentWindow::BeginStroke(const plEditorInputEvent& e)
 
 void plJoltClothAssetDocumentWindow::ContinueStroke(const plEditorInputEvent& e)
 {
+  if (m_bStressScrub)
+  {
+    float fWhere = 0.0f;
+    GetStressTimelinePosition(e, fWhere);
+
+    // every frame is simulated from the start of the test: only when the mouse reached another one
+    if (plMath::Abs(fWhere - m_fStressScrubbedTo) > 0.002f)
+    {
+      m_fStressScrubbedTo = fWhere;
+      ShowStressFrame(fWhere);
+    }
+
+    return;
+  }
+
+  if (m_bDragging)
+  {
+    plVec3 vGround;
+    if (PickGround(e, vGround))
+    {
+      // not further than the view shows, and less than the distance the cloth takes for a teleport
+      m_vDragOffset = vGround - m_vDragStart;
+      m_vDragOffset.z = 0.0f;
+
+      const float fLength = m_vDragOffset.GetLength();
+      if (fLength > 1.5f)
+        m_vDragOffset *= 1.5f / fLength;
+    }
+
+    return;
+  }
+
   if (!m_bStroke)
     return;
 
@@ -659,6 +963,20 @@ void plJoltClothAssetDocumentWindow::ContinueStroke(const plEditorInputEvent& e)
 
 void plJoltClothAssetDocumentWindow::EndStroke(bool bCancel)
 {
+  if (m_bStressScrub)
+  {
+    m_bStressScrub = false;
+    return;
+  }
+
+  if (m_bDragging)
+  {
+    // let go: the preview brings the character back to its place
+    m_bDragging = false;
+    m_vDragOffset.SetZero();
+    return;
+  }
+
   if (!m_bStroke)
     return;
 
@@ -701,6 +1019,12 @@ void plJoltClothAssetDocumentWindow::GetMapsToStore(plJoltClothPaintMap::Enum ch
 
 void plJoltClothAssetDocumentWindow::HoverBrush(const plEditorInputEvent& e)
 {
+  if (m_PaintTool == plJoltClothPaintTool::Off)
+  {
+    m_bBrushVisible = false;
+    return;
+  }
+
   plJoltClothMapTools::RayHit hit;
 
   m_bBrushVisible = m_bCookValid && PickSurface(e, hit);
@@ -806,4 +1130,58 @@ void plJoltClothAssetDocumentWindow::AutoSelectColliders()
   }
 
   accessor.FinishTransaction();
+}
+
+void plJoltClothAssetDocumentWindow::FitCollidersFromSkin()
+{
+  plJoltClothAssetDocument* pDoc = GetClothDocument();
+  const plMeshResourceDescriptor* pMesh = pDoc->GetCookedMesh();
+
+  if (!m_bCookValid || pMesh == nullptr)
+  {
+    plLog::Warning("Fit From Skin needs the cloth's mesh to be transformed.");
+    return;
+  }
+
+  // the cloth as it is, without colliders: every fitted shape it can reach is kept
+  plJoltClothDescriptor reach = m_Cooked;
+  reach.m_Colliders.Clear();
+
+  plDynamicArray<plJoltClothCollider> fitted;
+  plJoltClothBuilder::FitCollidersFromSkin(*pMesh, plJoltClothSkinFitOptions(), &reach, fitted);
+
+  if (fitted.IsEmpty())
+  {
+    plEditorUiServices::MessageBoxInformation("No shape could be fitted. The body needs vertices that are skinned to the bones near the garment.");
+    return;
+  }
+
+  const plDocumentObject* pObject = pDoc->GetPropertyObject();
+
+  plObjectCommandAccessor accessor(pDoc->GetCommandHistory());
+  accessor.StartTransaction("Fit Cloth Colliders From Skin");
+
+  accessor.ClearByName(pObject, "Colliders").AssertSuccess();
+
+  for (plUInt32 c = 0; c < fitted.GetCount(); ++c)
+  {
+    const plJoltClothCollider& collider = fitted[c];
+
+    plUuid guid = plUuid::MakeUuid();
+    accessor.AddObjectByName(pObject, "Colliders", c, plGetStaticRTTI<plJoltClothAssetCollider>(), guid).AssertSuccess();
+
+    const plDocumentObject* pCollider = accessor.GetObject(guid);
+    const plInt64 iShape = collider.m_Type == plJoltClothCollider::Type::Sphere ? plJoltClothColliderShape::Sphere : plJoltClothColliderShape::Capsule;
+
+    accessor.SetValueByName(pCollider, "Joint", collider.m_sJoint.GetString()).AssertSuccess();
+    accessor.SetValueByName(pCollider, "Shape", iShape).AssertSuccess();
+    accessor.SetValueByName(pCollider, "Offset", collider.m_Transform.m_vPosition).AssertSuccess();
+    accessor.SetValueByName(pCollider, "Rotation", collider.m_Transform.m_qRotation).AssertSuccess();
+    accessor.SetValueByName(pCollider, "Radius", collider.m_fRadius).AssertSuccess();
+    accessor.SetValueByName(pCollider, "Length", collider.m_fLength).AssertSuccess();
+  }
+
+  accessor.FinishTransaction();
+
+  plLog::Success("Fit From Skin: {} cloth collider(s) fitted to the body.", fitted.GetCount());
 }

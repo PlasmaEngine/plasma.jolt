@@ -5,6 +5,8 @@
 #include <EditorFramework/Actions/CommonAssetActions.h>
 #include <EditorFramework/Actions/ProjectActions.h>
 #include <EditorFramework/Actions/ViewActions.h>
+#include <EditorFramework/Actions/ViewLightActions.h>
+#include <EditorFramework/Manipulators/ManipulatorAdapterRegistry.h>
 #include <EditorPluginJolt/Actions/JoltActions.h>
 #include <EditorPluginJolt/ClothAsset/JoltClothActions.h>
 #include <EditorPluginJolt/ClothAsset/JoltClothAssetObjects.h>
@@ -65,6 +67,9 @@ void OnLoadPlugin()
   plToolsProject::GetSingleton()->s_Events.AddEventHandler(ToolsProjectEventHandler);
 
   plJoltAssetViewActions::RegisterActions();
+
+  plManipulatorAdapterRegistry::GetSingleton()->m_Factory.RegisterCreator(plGetStaticRTTI<plJoltClothColliderHandleAttribute>(), [](const plRTTI* pRtti) -> plManipulatorAdapter*
+    { return PL_DEFAULT_NEW(plJoltClothColliderHandleAdapter); });
 
   // Collision Mesh
   {
@@ -133,6 +138,7 @@ void OnLoadPlugin()
     {
       plActionMapManager::RegisterActionMap("JoltClothAssetViewToolBar").IgnoreResult();
       plViewActions::MapToolbarActions("JoltClothAssetViewToolBar", plViewActions::RenderMode);
+      plViewLightActions::MapToolbarActions("JoltClothAssetViewToolBar");
       plJoltClothActions::MapViewToolBarActions("JoltClothAssetViewToolBar");
       plJoltAssetViewActions::MapViewToolBarActions("JoltClothAssetViewToolBar", false);
     }
@@ -178,6 +184,7 @@ void OnLoadPlugin()
       plJoltActions::RegisterActions();
       plJoltActions::MapMenuActions();
       plJoltClothActions::MapSceneMenuActions();
+      plJoltClothActions::MapAnimatedMeshActions();
     }
 
     // Tool Bar
@@ -202,6 +209,8 @@ void OnUnloadPlugin()
   plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plRopeComponent_PropertyMetaStateEventHandler);
   plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plClothSheetComponent_PropertyMetaStateEventHandler);
   plPropertyMetaState::GetSingleton()->m_Events.RemoveEventHandler(plCharacterClothComponent_PropertyMetaStateEventHandler);
+
+  plManipulatorAdapterRegistry::GetSingleton()->m_Factory.UnregisterCreator(plGetStaticRTTI<plJoltClothColliderHandleAttribute>());
 
   plJoltActions::UnregisterActions();
   plJoltAssetViewActions::UnregisterActions();

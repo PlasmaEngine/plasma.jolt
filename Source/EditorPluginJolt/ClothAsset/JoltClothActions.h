@@ -75,6 +75,9 @@ public:
   /// \brief Adds the Cloth View menu to the scene window, next to the Jolt project settings.
   static void MapSceneMenuActions();
 
+  /// \brief Adds Create Cloth to the toolbar of the Animated Mesh window.
+  static void MapAnimatedMeshActions();
+
   static plActionDescriptorHandle s_hCategory;
   static plActionDescriptorHandle s_hView;
   static plActionDescriptorHandle s_hPaintTool;
@@ -90,6 +93,11 @@ public:
   static plActionDescriptorHandle s_hStressTest;
   static plActionDescriptorHandle s_hStressBaseline;
   static plActionDescriptorHandle s_hSceneView;
+  static plActionDescriptorHandle s_hDragTest;
+  static plActionDescriptorHandle s_hTeleport;
+  static plActionDescriptorHandle s_hTurn;
+  static plActionDescriptorHandle s_hFitFromSkin;
+  static plActionDescriptorHandle s_hCreateCloth;
 };
 
 /// \brief The cloth views of a scene: what the cvar Jolt.Cloth.View draws over every garment.
@@ -122,6 +130,7 @@ class plJoltClothSceneViewAction : public plEnumerationMenuAction
 public:
   plJoltClothSceneViewAction(const plActionContext& context, const char* szName, const char* szIconPath);
 
+  virtual void GetEntries(plDynamicArray<plDynamicMenuAction::Item>& out_entries) override;
   virtual plInt64 GetValue() const override;
   virtual void Execute(const plVariant& value) override;
 
@@ -144,6 +153,7 @@ public:
 
   plJoltClothEnumAction(const plActionContext& context, const char* szName, const char* szIconPath, Type type);
 
+  virtual void GetEntries(plDynamicArray<plDynamicMenuAction::Item>& out_entries) override;
   virtual plInt64 GetValue() const override;
   virtual void Execute(const plVariant& value) override;
 
@@ -191,6 +201,11 @@ public:
     AutoSelectColliders,
     StressTest,
     StressBaseline,
+    DragTest,
+    Teleport,
+    Turn,
+    FitFromSkin,
+    CreateCloth, ///< on the Animated Mesh window: makes the cloth asset of its mesh
   };
 
   plJoltClothButtonAction(const plActionContext& context, const char* szName, Type type);

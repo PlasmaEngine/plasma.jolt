@@ -4,6 +4,7 @@
 #include <EditorFramework/DocumentWindow/EngineDocumentWindow.h>
 #include <EditorFramework/InputContexts/CameraMoveContext.h>
 #include <EditorFramework/InputContexts/EditorInputContext.h>
+#include <EditorFramework/InputContexts/SelectionContext.h>
 #include <EditorPluginJolt/ClothAsset/JoltClothActions.h>
 #include <EditorPluginJolt/ClothAsset/JoltClothAsset.h>
 #include <Foundation/Types/UniquePtr.h>
@@ -12,6 +13,7 @@
 class plOrbitCamViewWidget;
 class plJoltClothAssetDocumentWindow;
 struct plCommandHistoryEvent;
+struct plDocumentEvent;
 
 /// \brief Takes the left mouse button of the cloth view while a paint tool is on, and hands the strokes to the window.
 /// Alt and the other buttons still move the camera.
@@ -70,6 +72,17 @@ public:
   float GetWind() const { return m_fWind; }
   void SetWind(float fWind) { m_fWind = fWind; }
 
+  /// \brief While the drag test is on, dragging in the view pulls the character along the ground and letting go lets
+  /// it swing back. It shows how the cloth lags behind a move. A paint tool switches it off.
+  bool GetDragTest() const { return m_bDragTest; }
+  void SetDragTest(bool bOn);
+
+  /// \brief Jumps the preview's character away and back, as a respawn does, to show what the teleport mode makes of it.
+  void Teleport();
+
+  /// \brief Turns the preview's character once around in a second.
+  void TurnTest();
+
   /// \brief Replaces the max distance map with a first guess: the top of every piece pinned, the rest ramping up.
   void AutoMask();
 
@@ -78,6 +91,10 @@ public:
 
   /// \brief Lists the joints whose skeleton shapes the cloth can reach, so that the list can be edited.
   void AutoSelectColliders();
+
+  /// \brief Replaces the asset's own colliders with capsules fitted to the body's skin, for the parts the cloth can
+  /// reach. For characters whose skeleton has no shapes.
+  void FitCollidersFromSkin();
 
   /// \brief Runs the cloth through the motion script in the preview and shows what it found.
   void RunStressTest();
@@ -99,6 +116,7 @@ private:
   void SendRedrawMsg();
   void QueryObjectBBox(plInt32 iPurpose = 0);
   void CommandEventHandler(const plCommandHistoryEvent& e);
+  void DocumentSavedHandler(const plDocumentEvent& e);
 
   /// Cooks the cloth from the document as it is and shows it in the preview, without saving anything.
   void SendLiveResourcePreview();
@@ -117,6 +135,12 @@ private:
   void ApplyBrushAt(const plVec3& vBindPosition);
   void SendPaintValues();
   void UpdateInputContexts();
+  bool PickGround(const plEditorInputEvent& e, plVec3& out_vPosition) const;
+
+  /// Where along the stress timeline the mouse is, from 0 to 1, and whether it is over the timeline at all.
+  bool GetStressTimelinePosition(const plEditorInputEvent& e, float& out_fWhere) const;
+  void ShowStressFrame(float fWhere);
+  void SendPreviewCommand(plStringView sWhat);
   void ShowStressResult(plStringView sText, const plVariant& worst);
   plString GetStressBaselineFile() const;
 
@@ -125,6 +149,11 @@ private:
   plUniquePtr<plCameraMoveContext> m_pCameraFlyContext;
   plUniquePtr<plJoltClothPaintContext> m_pPaintContext;
   int m_iCameraMode = 0;
+
+  // The handles of the asset's own colliders are switched on in the properties. While they show, the view picks
+  // what is under the mouse so that they can be grabbed.
+  plUniquePtr<plSelectionContext> m_pHandleContext;
+  bool m_bHandlesShown = false;
 
   plJoltClothViewMode::Enum m_ViewMode = plJoltClothViewMode::Shaded;
   plJoltClothPaintTool::Enum m_PaintTool = plJoltClothPaintTool::Off;
@@ -154,5 +183,19 @@ private:
   plVec3 m_vBrushWorldPosition = plVec3::MakeZero();
   bool m_bBrushVisible = false;
 
+  // the drag test: where on the ground the drag started, and how far the character is pulled from its place
+  bool m_bDragTest = false;
+  bool m_bDragging = false;
+  plVec3 m_vDragStart = plVec3::MakeZero();
+  plVec3 m_vDragOffset = plVec3::MakeZero();
+
   plDataBuffer m_LastStressResult; ///< the worst values of the last stress test, as a baseline is stored
+
+  // the stress timeline that the preview draws along the top of the view
+  bool m_bStressShown = false;
+  bool m_bStressScrub = false;
+  float m_fStressScrubbedTo = -1.0f;
+  bool m_bStressFramePending = false; ///< the preview is still on its way to the frame that was asked for
+  float m_fStressFrameAsked = -1.0f;
+  float m_fStressFrameWanted = -1.0f;
 };

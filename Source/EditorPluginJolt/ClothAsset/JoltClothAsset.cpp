@@ -11,7 +11,7 @@
 #include <ToolsFoundation/Object/ObjectCommandAccessor.h>
 
 // clang-format off
-PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plJoltClothAssetDocument, 1, plRTTINoAllocator)
+PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plJoltClothAssetDocument, 3, plRTTINoAllocator)
 PL_END_DYNAMIC_REFLECTED_TYPE;
 // clang-format on
 
@@ -57,7 +57,7 @@ namespace
 } // namespace
 
 plJoltClothAssetDocument::plJoltClothAssetDocument(plStringView sDocumentPath)
-  : plSimpleAssetDocument<plJoltClothAssetProperties>(sDocumentPath, plAssetDocEngineConnection::Simple)
+  : plSimpleAssetDocument<plJoltClothAssetProperties>(sDocumentPath, plAssetDocEngineConnection::Simple, true)
 {
   // the preview starts with its grid on
   m_uiCommonAssetStateFlags |= plCommonAssetUiState::Grid;
@@ -188,6 +188,7 @@ plStatus plJoltClothAssetDocument::BuildCloth(const plPlatformProfile* pAssetPro
   simulation.m_uiIterations = pProp->m_uiIterations;
   simulation.m_bTethers = pProp->m_bTethers;
   simulation.m_fTetherSlack = pProp->m_fTetherSlack;
+  simulation.m_fStretchLimit = pProp->m_fStretchLimit;
   simulation.m_WorldCollision = pProp->m_WorldCollision;
   simulation.m_fGravityFactor = pProp->m_fGravityFactor;
   simulation.m_fFullRateDistance = pProp->m_fFullRateDistance;
@@ -288,6 +289,38 @@ void plJoltClothAssetDocument::SetPaintedMaps(const plJoltClothPaintedMaps& maps
 const plSkeletonResourceDescriptor* plJoltClothAssetDocument::GetCookedSkeleton() const
 {
   return m_pSource != nullptr && m_pSource->m_bHasSkeleton ? &m_pSource->m_Skeleton : nullptr;
+}
+
+const plMeshResourceDescriptor* plJoltClothAssetDocument::GetCookedMesh() const
+{
+  return m_pSource != nullptr ? &m_pSource->m_Mesh : nullptr;
+}
+
+void plJoltClothAssetDocument::GetColliderJoints(plStringBuilder& out_sJoints) const
+{
+  out_sJoints.Clear();
+
+  for (const plJoltClothAssetCollider& collider : GetProperties()->m_Colliders)
+  {
+    if (!collider.m_sJoint.IsEmpty())
+      out_sJoints.Append(collider.m_sJoint.GetView(), ";");
+  }
+}
+
+plResult plJoltClothAssetDocument::ComputeObjectTransformation(const plDocumentObject* pObject, plTransform& out_result) const
+{
+  out_result.SetIdentity();
+
+  if (pObject == nullptr || pObject->GetType() != plGetStaticRTTI<plJoltClothAssetCollider>())
+    return PL_FAILURE;
+
+  const plString sJoint = pObject->GetTypeAccessor().GetValue("Joint").ConvertTo<plString>();
+
+  // a joint the preview has not reported yet leaves the handle at the origin for a frame
+  m_JointTransforms.TryGetValue(sJoint, out_result);
+  out_result.m_vScale.Set(1.0f);
+
+  return PL_SUCCESS;
 }
 
 plTransformStatus plJoltClothAssetDocument::InternalTransformAsset(plStreamWriter& stream, plStringView sOutputTag, const plPlatformProfile* pAssetProfile, const plAssetFileHeader& AssetHeader, plBitflags<plTransformFlags> transformFlags)

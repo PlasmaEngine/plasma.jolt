@@ -1,0 +1,7 @@
+<svg width="800px" height="800px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="#ffffff">
+  <!-- a limb -->
+  <path d="M7 4C9 4 10 6 10 9V15C10 18 9 20 7 20" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="1.6 2"/>
+  <path d="M17 4C15 4 14 6 14 9V15C14 18 15 20 17 20" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round" stroke-dasharray="1.6 2"/>
+  <!-- the capsule fitted into it -->
+  <rect x="9.6" y="5" width="4.8" height="14" rx="2.4" stroke="#ffffff" stroke-width="1.8"/>
+</svg>

@@ -30,8 +30,27 @@ PL_BEGIN_STATIC_REFLECTED_TYPE(plJoltClothAssetCollider, plNoBase, 1, plRTTIDefa
     PL_MEMBER_PROPERTY("HalfExtents", m_vHalfExtents)->AddAttributes(new plDefaultValueAttribute(plVec3(0.1f))),
   }
   PL_END_PROPERTIES;
+  PL_BEGIN_ATTRIBUTES
+  {
+    // Handles in the Cloth window, relative to the collider's joint: the Rotation row switches on a turn handle that
+    // sits at the offset, the Offset row a move handle. The move handle comes last so that the Offset row gets it.
+    new plJoltClothColliderHandleAttribute(nullptr, "Rotation", "Offset"),
+    new plJoltClothColliderHandleAttribute("Offset"),
+  }
+  PL_END_ATTRIBUTES;
 }
 PL_END_STATIC_REFLECTED_TYPE;
+
+PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plJoltClothColliderHandleAttribute, 1, plRTTIDefaultAllocator<plJoltClothColliderHandleAttribute>)
+PL_END_DYNAMIC_REFLECTED_TYPE;
+
+void plJoltClothColliderHandleAdapter::Finalize()
+{
+  plTransformManipulatorAdapter::Finalize();
+
+  m_TranslateGizmo.SetSnapping(false);
+  m_RotateGizmo.SetSnapping(false);
+}
 
 PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plJoltClothAssetProperties, 1, plRTTIDefaultAllocator<plJoltClothAssetProperties>)
 {
@@ -63,6 +82,7 @@ PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plJoltClothAssetProperties, 1, plRTTIDefaultAllo
     PL_MEMBER_PROPERTY("Iterations", m_uiIterations)->AddAttributes(new plDefaultValueAttribute(8), new plClampValueAttribute(1, 32)),
     PL_MEMBER_PROPERTY("Tethers", m_bTethers)->AddAttributes(new plDefaultValueAttribute(true)),
     PL_MEMBER_PROPERTY("TetherSlack", m_fTetherSlack)->AddAttributes(new plDefaultValueAttribute(1.03f), new plClampValueAttribute(1.0f, 1.5f)),
+    PL_MEMBER_PROPERTY("StretchLimit", m_fStretchLimit)->AddAttributes(new plDefaultValueAttribute(0.08f), new plClampValueAttribute(0.0f, 1.0f)),
     PL_ENUM_MEMBER_PROPERTY("WorldCollision", plJoltClothWorldCollision, m_WorldCollision),
     PL_MEMBER_PROPERTY("GravityFactor", m_fGravityFactor)->AddAttributes(new plDefaultValueAttribute(1.0f)),
     PL_MEMBER_PROPERTY("FullRateDistance", m_fFullRateDistance)->AddAttributes(new plDefaultValueAttribute(14.0f), new plClampValueAttribute(0.0f, 1000.0f)),
@@ -74,6 +94,7 @@ PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plJoltClothAssetProperties, 1, plRTTIDefaultAllo
     PL_ARRAY_MEMBER_PROPERTY("Colliders", m_Colliders),
 
     PL_MEMBER_PROPERTY("PreviewClip", m_sPreviewClip)->AddAttributes(new plAssetBrowserAttribute("CompatibleAsset_Keyframe_Animation", plDependencyFlags::None), new plGroupAttribute("Preview")),
+    PL_ARRAY_MEMBER_PROPERTY("StressClips", m_StressClips)->AddAttributes(new plAssetBrowserAttribute("CompatibleAsset_Keyframe_Animation", plDependencyFlags::None)),
   }
   PL_END_PROPERTIES;
 }

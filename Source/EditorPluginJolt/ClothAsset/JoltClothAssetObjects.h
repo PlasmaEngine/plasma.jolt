@@ -1,6 +1,7 @@
 #pragma once
 
 #include <EditorFramework/Assets/SimpleAssetDocument.h>
+#include <EditorFramework/Manipulators/TransformManipulatorAdapter.h>
 #include <JoltPlugin/CharacterCloth/JoltClothDescriptor.h>
 
 struct plPropertyMetaStateEvent;
@@ -75,6 +76,26 @@ struct plJoltClothAssetCollider
 
 PL_DECLARE_REFLECTABLE_TYPE(PL_NO_LINKAGE, plJoltClothAssetCollider);
 
+/// \brief The move and turn handles of a cloth collider. Like the transform manipulator, but without snapping to
+/// the editor's grid: colliders are placed by centimetres.
+class plJoltClothColliderHandleAttribute : public plTransformManipulatorAttribute
+{
+  PL_ADD_DYNAMIC_REFLECTION(plJoltClothColliderHandleAttribute, plTransformManipulatorAttribute);
+
+public:
+  plJoltClothColliderHandleAttribute() = default;
+  plJoltClothColliderHandleAttribute(const char* szTranslateProperty, const char* szRotateProperty = nullptr, const char* szOffsetTranslation = nullptr)
+    : plTransformManipulatorAttribute(szTranslateProperty, szRotateProperty, nullptr, szOffsetTranslation)
+  {
+  }
+};
+
+class plJoltClothColliderHandleAdapter : public plTransformManipulatorAdapter
+{
+protected:
+  virtual void Finalize() override;
+};
+
 class plJoltClothAssetProperties : public plReflectedClass
 {
   PL_ADD_DYNAMIC_REFLECTION(plJoltClothAssetProperties, plReflectedClass);
@@ -113,6 +134,7 @@ public:
   plUInt8 m_uiIterations = 8;
   bool m_bTethers = true;
   float m_fTetherSlack = 1.03f;
+  float m_fStretchLimit = 0.08f;
   plEnum<plJoltClothWorldCollision> m_WorldCollision;
   float m_fGravityFactor = 1.0f;
   float m_fFullRateDistance = 14.0f;
@@ -126,6 +148,7 @@ public:
 
   // Preview, not part of the cooked cloth
   plString m_sPreviewClip;
+  plHybridArray<plString, 4> m_StressClips; ///< clips the stress test plays after its motion script, next to the preview clip
 
   /// \brief The fabric the cook uses: the preset's values, or the custom ones.
   plJoltClothFabric GetFabric() const;

@@ -3,6 +3,7 @@
 #include <EditorEngineProcessFramework/EngineProcess/EngineProcessMessages.h>
 #include <EditorFramework/IPC/EngineProcessConnection.h>
 #include <EditorPluginJolt/ClothAsset/JoltClothActions.h>
+#include <EditorPluginJolt/ClothAsset/JoltClothAssetManager.h>
 #include <EditorPluginJolt/ClothAsset/JoltClothAssetWindow.h>
 #include <GuiFoundation/Action/ActionMapManager.h>
 
@@ -53,6 +54,11 @@ plActionDescriptorHandle plJoltClothActions::s_hWind;
 plActionDescriptorHandle plJoltClothActions::s_hStressTest;
 plActionDescriptorHandle plJoltClothActions::s_hStressBaseline;
 plActionDescriptorHandle plJoltClothActions::s_hSceneView;
+plActionDescriptorHandle plJoltClothActions::s_hDragTest;
+plActionDescriptorHandle plJoltClothActions::s_hTeleport;
+plActionDescriptorHandle plJoltClothActions::s_hTurn;
+plActionDescriptorHandle plJoltClothActions::s_hFitFromSkin;
+plActionDescriptorHandle plJoltClothActions::s_hCreateCloth;
 
 plInt64 plJoltClothSceneViewAction::s_iView = 0;
 
@@ -90,6 +96,13 @@ namespace
   {
     return dynamic_cast<plJoltClothAssetDocumentWindow*>(plDocumentWindow::FindWindowByDocument(context.m_pDocument));
   }
+
+  /// The menu lists an enum by name; these enums read better in the order they are declared in.
+  void SortByValue(plDynamicArray<plDynamicMenuAction::Item>& ref_entries)
+  {
+    ref_entries.Sort([](const plDynamicMenuAction::Item& lhs, const plDynamicMenuAction::Item& rhs)
+      { return lhs.m_UserValue.ConvertTo<plInt64>() < rhs.m_UserValue.ConvertTo<plInt64>(); });
+  }
 } // namespace
 
 void plJoltClothActions::RegisterActions()
@@ -113,6 +126,12 @@ void plJoltClothActions::RegisterActions()
   s_hStressBaseline = PL_REGISTER_ACTION_1("Cloth.StressBaseline", plActionScope::Document, "Cloth", "", plJoltClothButtonAction, plJoltClothButtonAction::Type::StressBaseline);
 
   s_hSceneView = PL_REGISTER_DYNAMIC_MENU("Cloth.SceneView", plJoltClothSceneViewAction, ":/AssetIcons/Jolt_Cloth.svg");
+
+  s_hDragTest = PL_REGISTER_ACTION_1("Cloth.DragTest", plActionScope::Document, "Cloth", "", plJoltClothButtonAction, plJoltClothButtonAction::Type::DragTest);
+  s_hTeleport = PL_REGISTER_ACTION_1("Cloth.Teleport", plActionScope::Document, "Cloth", "", plJoltClothButtonAction, plJoltClothButtonAction::Type::Teleport);
+  s_hTurn = PL_REGISTER_ACTION_1("Cloth.Turn", plActionScope::Document, "Cloth", "", plJoltClothButtonAction, plJoltClothButtonAction::Type::Turn);
+  s_hFitFromSkin = PL_REGISTER_ACTION_1("Cloth.FitFromSkin", plActionScope::Document, "Cloth", "", plJoltClothButtonAction, plJoltClothButtonAction::Type::FitFromSkin);
+  s_hCreateCloth = PL_REGISTER_ACTION_1("Cloth.Create", plActionScope::Document, "Cloth", "", plJoltClothButtonAction, plJoltClothButtonAction::Type::CreateCloth);
 }
 
 void plJoltClothActions::UnregisterActions()
@@ -132,6 +151,11 @@ void plJoltClothActions::UnregisterActions()
   plActionManager::UnregisterAction(s_hStressTest);
   plActionManager::UnregisterAction(s_hStressBaseline);
   plActionManager::UnregisterAction(s_hSceneView);
+  plActionManager::UnregisterAction(s_hDragTest);
+  plActionManager::UnregisterAction(s_hTeleport);
+  plActionManager::UnregisterAction(s_hTurn);
+  plActionManager::UnregisterAction(s_hFitFromSkin);
+  plActionManager::UnregisterAction(s_hCreateCloth);
 }
 
 void plJoltClothActions::MapSceneMenuActions()
@@ -139,6 +163,13 @@ void plJoltClothActions::MapSceneMenuActions()
   // next to the Jolt project settings, which the Jolt actions put there
   if (plActionMap* pMap = plActionMapManager::GetActionMap("EditorPluginScene_Scene2MenuBar"))
     pMap->MapAction(s_hSceneView, "G.Plugins.Settings", "Jolt", 2.0f);
+}
+
+void plJoltClothActions::MapAnimatedMeshActions()
+{
+  // the window belongs to the engine's asset plugin, which registers its toolbar before this plugin loads
+  if (plActionMap* pMap = plActionMapManager::GetActionMap("AnimatedMeshAssetToolBar"))
+    pMap->MapAction(s_hCreateCloth, "", 20.0f);
 }
 
 void plJoltClothActions::MapToolBarActions(plStringView sMapping)
@@ -160,8 +191,16 @@ void plJoltClothActions::MapToolBarActions(plStringView sMapping)
   pMap->MapAction(s_hAutoMask, sCategory, 7.0f);
   pMap->MapAction(s_hRevertMaps, sCategory, 8.0f);
 
+  // colliders
   pMap->MapAction(s_hAutoSelectColliders, sCategory, 9.0f);
+  pMap->MapAction(s_hFitFromSkin, sCategory, 9.5f);
+
+  // motion: what moves the character in the preview
   pMap->MapAction(s_hWind, sCategory, 10.0f);
+  pMap->MapAction(s_hDragTest, sCategory, 10.2f);
+  pMap->MapAction(s_hTurn, sCategory, 10.4f);
+  pMap->MapAction(s_hTeleport, sCategory, 10.6f);
+
   pMap->MapAction(s_hStressTest, sCategory, 11.0f);
   pMap->MapAction(s_hStressBaseline, sCategory, 12.0f);
 }
@@ -197,6 +236,12 @@ plJoltClothEnumAction::plJoltClothEnumAction(const plActionContext& context, con
 plJoltClothAssetDocumentWindow* plJoltClothEnumAction::GetWindow() const
 {
   return FindClothWindow(m_Context);
+}
+
+void plJoltClothEnumAction::GetEntries(plDynamicArray<plDynamicMenuAction::Item>& out_entries)
+{
+  SUPER::GetEntries(out_entries);
+  SortByValue(out_entries);
 }
 
 plInt64 plJoltClothEnumAction::GetValue() const
@@ -344,6 +389,32 @@ plJoltClothButtonAction::plJoltClothButtonAction(const plActionContext& context,
     case Type::StressBaseline:
       SetIconPath(":/JoltPlugin/ClothBaseline.svg");
       break;
+
+    case Type::DragTest:
+    {
+      const plJoltClothAssetDocumentWindow* pWindow = GetWindow();
+
+      SetIconPath(":/JoltPlugin/ClothDrag.svg");
+      SetCheckable(true, false);
+      SetChecked(pWindow != nullptr && pWindow->GetDragTest(), false);
+      break;
+    }
+
+    case Type::Teleport:
+      SetIconPath(":/JoltPlugin/ClothTeleport.svg");
+      break;
+
+    case Type::Turn:
+      SetIconPath(":/JoltPlugin/ClothTurn.svg");
+      break;
+
+    case Type::FitFromSkin:
+      SetIconPath(":/JoltPlugin/ClothFitColliders.svg");
+      break;
+
+    case Type::CreateCloth:
+      SetIconPath(":/AssetIcons/Jolt_Cloth.svg");
+      break;
   }
 }
 
@@ -355,6 +426,17 @@ plJoltClothAssetDocumentWindow* plJoltClothButtonAction::GetWindow() const
 void plJoltClothButtonAction::Execute(const plVariant& value)
 {
   PL_IGNORE_UNUSED(value);
+
+  if (m_Type == Type::CreateCloth)
+  {
+    // this one sits in the Animated Mesh window
+    const plStatus status = plJoltClothAssetDocumentManager::CreateClothForMesh(m_Context.m_pDocument->GetDocumentPath());
+
+    if (status.Failed())
+      plLog::Error("Create Cloth: {}", status.m_sMessage);
+
+    return;
+  }
 
   plJoltClothAssetDocumentWindow* pWindow = GetWindow();
   if (pWindow == nullptr)
@@ -386,6 +468,26 @@ void plJoltClothButtonAction::Execute(const plVariant& value)
     case Type::StressBaseline:
       pWindow->SetStressBaseline();
       break;
+
+    case Type::DragTest:
+      pWindow->SetDragTest(!pWindow->GetDragTest());
+      SetChecked(pWindow->GetDragTest());
+      break;
+
+    case Type::Teleport:
+      pWindow->Teleport();
+      break;
+
+    case Type::Turn:
+      pWindow->TurnTest();
+      break;
+
+    case Type::FitFromSkin:
+      pWindow->FitCollidersFromSkin();
+      break;
+
+    case Type::CreateCloth:
+      break;
   }
 }
 
@@ -395,6 +497,12 @@ plJoltClothSceneViewAction::plJoltClothSceneViewAction(const plActionContext& co
   : plEnumerationMenuAction(context, szName, szIconPath)
 {
   InitEnumerationType(plGetStaticRTTI<plJoltClothSceneView>());
+}
+
+void plJoltClothSceneViewAction::GetEntries(plDynamicArray<plDynamicMenuAction::Item>& out_entries)
+{
+  SUPER::GetEntries(out_entries);
+  SortByValue(out_entries);
 }
 
 plInt64 plJoltClothSceneViewAction::GetValue() const

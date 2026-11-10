@@ -39,7 +39,21 @@ public:
   /// \brief The skeleton the mesh is skinned to, when it was found at the last cook. nullptr otherwise.
   const plSkeletonResourceDescriptor* GetCookedSkeleton() const;
 
+  /// \brief The mesh the cloth was last cooked from, or nullptr before the first cook.
+  const plMeshResourceDescriptor* GetCookedMesh() const;
+
   const plJoltClothCookInfo& GetLastCookInfo() const { return m_LastCookInfo; }
+
+  /// \brief Where a joint is in the preview right now. The handles of the asset's own colliders sit relative to it.
+  void SetJointTransform(plStringView sJoint, const plTransform& transform) { m_JointTransforms[sJoint] = transform; }
+
+  /// \brief The joints that the asset's own colliders are attached to, separated by ';'.
+  void GetColliderJoints(plStringBuilder& out_sJoints) const;
+
+  virtual plManipulatorSearchStrategy GetManipulatorSearchStrategy() const override { return plManipulatorSearchStrategy::ChildrenOfSelectedObject; }
+
+  /// \brief For a collider of the asset: the transform of its joint in the preview.
+  virtual plResult ComputeObjectTransformation(const plDocumentObject* pObject, plTransform& out_result) const override;
 
   virtual void SetCommonAssetUiState(plCommonAssetUiState::Enum state, double value) override;
   virtual double GetCommonAssetUiState(plCommonAssetUiState::Enum state) const override;
@@ -67,5 +81,6 @@ private:
 
   plUniquePtr<Source> m_pSource;
   plJoltClothCookInfo m_LastCookInfo;
+  plMap<plString, plTransform> m_JointTransforms;
   double m_fSimulationSpeed = 1.0;
 };

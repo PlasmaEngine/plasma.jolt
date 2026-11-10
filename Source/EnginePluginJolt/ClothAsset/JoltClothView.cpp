@@ -1,5 +1,6 @@
 #include <EnginePluginJolt/EnginePluginJoltPCH.h>
 
+#include <EditorEngineProcessFramework/EngineProcess/EngineProcessApp.h>
 #include <EnginePluginJolt/ClothAsset/JoltClothContext.h>
 #include <EnginePluginJolt/ClothAsset/JoltClothView.h>
 #include <RendererCore/Pipeline/View.h>
@@ -37,6 +38,55 @@ plViewHandle plJoltClothViewContext::CreateView()
   return pView->GetHandle();
 }
 
+void plJoltClothViewContext::HandleViewMessage(const plEditorEngineViewMsg* pMsg)
+{
+  if (const plViewPickingMsgToEngine* pPick = plDynamicCast<const plViewPickingMsgToEngine*>(pMsg))
+  {
+    plView* pView = nullptr;
+    if (plRenderWorld::TryGetView(m_hView, pView))
+    {
+      pView->SetRenderPassProperty("EditorPickingPass", "Active", true);
+      pView->SetRenderPassProperty("EditorPickingPass", "PickSelected", true);
+    }
+
+    PickObjectAt(pPick->m_uiPickPosX, pPick->m_uiPickPosY);
+    return;
+  }
+
+  plEngineProcessViewContext::HandleViewMessage(pMsg);
+}
+
+void plJoltClothViewContext::PickObjectAt(plUInt16 x, plUInt16 y)
+{
+  // remote processes do not support picking
+  if (plEditorEngineProcessApp::GetSingleton()->IsRemoteMode())
+    return;
+
+  plViewPickingResultMsgToEditor res;
+  PL_SCOPE_EXIT(SendViewMessage(&res));
+
+  plView* pView = nullptr;
+  if (!plRenderWorld::TryGetView(m_hView, pView))
+    return;
+
+  pView->SetRenderPassProperty("EditorPickingPass", "PickingPosition", plVec2(x, y));
+
+  if (!pView->IsRenderPassReadBackPropertyExisting("EditorPickingPass", "PickedPosition"))
+    return;
+
+  const plVariant pickedPosition = pView->GetRenderPassReadBackProperty("EditorPickingPass", "PickedPosition");
+  if (!pickedPosition.IsA<plVec3>())
+    return;
+
+  const plUInt32 uiPickingID = pView->GetRenderPassReadBackProperty("EditorPickingPass", "PickedID").ConvertTo<plUInt32>();
+  res.m_vPickedNormal = pView->GetRenderPassReadBackProperty("EditorPickingPass", "PickedNormal").ConvertTo<plVec3>();
+  res.m_vPickingRayStartPosition = pView->GetRenderPassReadBackProperty("EditorPickingPass", "PickedRayStartPosition").ConvertTo<plVec3>();
+  res.m_vPickedPosition = pickedPosition.ConvertTo<plVec3>();
+
+  // the handles are the only things here that the editor knows by an id
+  res.m_OtherGuid = GetDocumentContext()->m_Context.m_OtherPickingMap.GetGuid(uiPickingID & 0x00FFFFFF);
+}
+
 void plJoltClothViewContext::SetCamera(const plViewRedrawMsgToEngine* pMsg)
 {
   if (m_pContext->m_bDisplayGrid)
@@ -51,4 +101,6 @@ void plJoltClothViewContext::SetCamera(const plViewRedrawMsgToEngine* pMsg)
 
   if (!sText.IsEmpty())
     plDebugRenderer::DrawInfoText(m_hView, plDebugTextPlacement::BottomLeft, "AssetStats", sText);
+
+  m_pContext->DrawStressTimeline(m_hView, static_cast<float>(pMsg->m_uiWindowWidth), static_cast<float>(pMsg->m_uiWindowHeight));
 }
