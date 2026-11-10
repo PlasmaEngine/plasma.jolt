@@ -209,6 +209,7 @@ void plJoltClothSheetComponent::OnMsgExtractRenderData(plMsgExtractRenderData& m
     }
   }
 
+  pRenderData->m_DataOffsets.m_uiMaterial = plPackMaterialDataOffset(m_hMaterial, 0);
   msg.AddRenderData(pRenderData, category, plRenderData::Caching::Never);
 }
 
