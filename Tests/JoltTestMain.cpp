@@ -5,14 +5,19 @@
 
 /// \brief Command line:
 ///   JoltTests.exe [--group <name>] [--strict] [--stress <seconds>]
+///   JoltTests.exe --cloth-stress <file.plBinJoltCloth> [--baseline <file>] [--write-baseline]
 ///
 /// Without arguments all groups run. Failed checks make the exit code 1. Checks that describe R1 fixes are listed as open
-/// items and only fail the run with --strict. --stress runs the soak scene instead of the groups.
+/// items and only fail the run with --strict. --stress runs the soak scene instead of the groups. --cloth-stress runs
+/// the cloth stress test on a transformed cloth asset, and compares it with a baseline or writes one.
 struct Options
 {
   const char* m_szGroup = nullptr;
   bool m_bStrict = false;
   double m_fStressSeconds = 0.0;
+  const char* m_szClothStressFile = nullptr;
+  const char* m_szClothBaselineFile = nullptr;
+  bool m_bWriteClothBaseline = false;
 };
 
 static Options ParseOptions(int argc, char** argv)
@@ -27,6 +32,12 @@ static Options ParseOptions(int argc, char** argv)
       options.m_szGroup = argv[++i];
     else if (std::strcmp(argv[i], "--stress") == 0 && i + 1 < argc)
       options.m_fStressSeconds = std::atof(argv[++i]);
+    else if (std::strcmp(argv[i], "--cloth-stress") == 0 && i + 1 < argc)
+      options.m_szClothStressFile = argv[++i];
+    else if (std::strcmp(argv[i], "--baseline") == 0 && i + 1 < argc)
+      options.m_szClothBaselineFile = argv[++i];
+    else if (std::strcmp(argv[i], "--write-baseline") == 0)
+      options.m_bWriteClothBaseline = true;
   }
 
   return options;
@@ -55,6 +66,8 @@ static void RunGroups(const Options& options)
     {"buoyancy", RunBuoyancyTests},
     {"character", RunCharacterTests},
     {"lifecycle", RunLifecycleTests},
+    {"cloth", RunClothTests},
+    {"bonechain", RunBoneChainTests},
   };
 
   for (const Group& group : groups)
@@ -75,7 +88,11 @@ int main(int argc, char** argv)
   JoltTest::Startup();
   std::printf("engine systems started\n");
 
-  if (options.m_fStressSeconds > 0.0)
+  if (options.m_szClothStressFile != nullptr)
+  {
+    RunClothStressFile(options.m_szClothStressFile, options.m_szClothBaselineFile, options.m_bWriteClothBaseline);
+  }
+  else if (options.m_fStressSeconds > 0.0)
   {
     const plUInt64 uiFrames = RunStressScene(options.m_fStressSeconds);
     std::printf("Soak scene: %llu frames\n", static_cast<unsigned long long>(uiFrames));

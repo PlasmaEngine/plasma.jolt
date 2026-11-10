@@ -194,6 +194,10 @@ public:
   JPH::GroupFilter* GetGroupFilter() const { return m_pGroupFilter; }
   JPH::GroupFilter* GetGroupFilterIgnoreSame() const { return m_pGroupFilterIgnoreSame; }
 
+  /// \brief The filter of character cloth: a garment (sub group 0) and its body colliders (sub group 1) share a group ID,
+  /// and a body collider touches nothing but the garment with its ID.
+  JPH::GroupFilter* GetGroupFilterCloth() const { return m_pGroupFilterCloth; }
+
   void EnableJoinedBodiesCollisions(plUInt32 uiObjectFilterID1, plUInt32 uiObjectFilterID2, bool bEnable);
 
   JPH::TempAllocator* GetTempAllocator() const { return m_pTempAllocator.get(); }
@@ -333,6 +337,7 @@ private:
 
   JPH::GroupFilter* m_pGroupFilter = nullptr;
   JPH::GroupFilter* m_pGroupFilterIgnoreSame = nullptr;
+  JPH::GroupFilter* m_pGroupFilterCloth = nullptr;
 
   plUInt32 m_uiBodiesAddedSinceOptimize = 100;
   plDeque<plUInt32> m_BodiesToAdd;

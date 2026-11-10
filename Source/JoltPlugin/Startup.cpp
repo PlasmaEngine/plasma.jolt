@@ -1,6 +1,7 @@
 #include <JoltPlugin/JoltPluginPCH.h>
 
 #include <Foundation/Configuration/Startup.h>
+#include <JoltPlugin/CharacterCloth/JoltClothResource.h>
 #include <JoltPlugin/Resources/JoltDestructibleMeshResource.h>
 #include <JoltPlugin/Resources/JoltMeshResource.h>
 #include <JoltPlugin/System/JoltCore.h>
@@ -19,6 +20,7 @@ PL_BEGIN_SUBSYSTEM_DECLARATION(Jolt, JoltPlugin)
     plResourceManager::RegisterResourceForAssetType("Jolt_Colmesh_Convex", plGetStaticRTTI<plJoltMeshResource>());
 
     plResourceManager::RegisterResourceForAssetType("DestructibleMesh", plGetStaticRTTI<plJoltDestructibleMeshResource>());
+    plResourceManager::RegisterResourceForAssetType("Jolt_Cloth", plGetStaticRTTI<plJoltClothResource>());
 
     plJoltMeshResourceDescriptor desc;
     plJoltMeshResourceHandle hResource = plResourceManager::CreateResource<plJoltMeshResource>("Missing Jolt Mesh", std::move(desc), "Empty collision mesh");
@@ -39,6 +41,7 @@ PL_BEGIN_SUBSYSTEM_DECLARATION(Jolt, JoltPlugin)
 
     plJoltMeshResource::CleanupDynamicPluginReferences();
     plJoltDestructibleMeshResource::CleanupDynamicPluginReferences();
+    plJoltClothResource::CleanupDynamicPluginReferences();
   }
 
 PL_END_SUBSYSTEM_DECLARATION;

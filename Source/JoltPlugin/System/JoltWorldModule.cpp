@@ -211,6 +211,22 @@ public:
   }
 };
 
+/// Character cloth: sub group 0 is a garment, sub group 1 one of its body colliders. group1 is the one with this filter.
+class plJoltGroupFilterCloth : public JPH::GroupFilter
+{
+public:
+  virtual bool CanCollide(const JPH::CollisionGroup& group1, const JPH::CollisionGroup& group2) const override
+  {
+    const bool bBothCloth = group2.GetGroupFilter() == this;
+
+    if (bBothCloth)
+      return group1.GetGroupID() == group2.GetGroupID() && group1.GetSubGroupID() != group2.GetSubGroupID();
+
+    // a body collider exists for its garment alone; a garment meets the world as far as its layer lets it
+    return group1.GetSubGroupID() == 0;
+  }
+};
+
 void plJoltWorldModule::Deinitialize()
 {
   m_HeightfieldShapeCache.Clear(); // JPH::Ref in each entry releases the shape automatically
@@ -235,6 +251,9 @@ void plJoltWorldModule::Deinitialize()
 
   m_pGroupFilterIgnoreSame->Release();
   m_pGroupFilterIgnoreSame = nullptr;
+
+  m_pGroupFilterCloth->Release();
+  m_pGroupFilterCloth = nullptr;
 }
 
 
@@ -296,6 +315,11 @@ void plJoltWorldModule::Initialize()
   {
     m_pGroupFilterIgnoreSame = new plJoltGroupFilterIgnoreSame();
     m_pGroupFilterIgnoreSame->AddRef();
+  }
+
+  {
+    m_pGroupFilterCloth = new plJoltGroupFilterCloth();
+    m_pGroupFilterCloth->AddRef();
   }
 }
 
@@ -669,7 +693,7 @@ void plJoltWorldModule::ValidateBodies(const char* szWhen)
 
     plStringBuilder sError;
 
-    if (pFilter != nullptr && pFilter != m_pGroupFilter && pFilter != m_pGroupFilterIgnoreSame)
+    if (pFilter != nullptr && pFilter != m_pGroupFilter && pFilter != m_pGroupFilterIgnoreSame && pFilter != m_pGroupFilterCloth)
     {
       sError.SetFormat("[{}] Jolt body {} has an unknown group filter {} (user data type {})", szWhen, id.GetIndexAndSequenceNumber(), plArgP(pFilter), (int)userType);
     }

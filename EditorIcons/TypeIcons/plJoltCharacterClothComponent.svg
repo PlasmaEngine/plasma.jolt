@@ -1,0 +1,10 @@
+<svg width="800px" height="800px" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="#ffffff">
+  <!-- head -->
+  <circle cx="12" cy="4.2" r="2" stroke="#ffffff" stroke-width="1.8"/>
+  <!-- cape hanging from the shoulders, wavy hem -->
+  <path d="M8.2 8.2C7.2 12.2 6.2 15.6 5 19.6C6.8 18.7 8.2 20.6 10 19.6C11.3 18.9 12.7 20.6 14 19.6C15.8 18.7 17.2 20.6 19 19.6C17.8 15.6 16.8 12.2 15.8 8.2" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- shoulders -->
+  <path d="M8.2 8.2C9.4 7.6 10.6 7.4 12 7.4C13.4 7.4 14.6 7.6 15.8 8.2" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- fold -->
+  <path d="M12 11V16.2" stroke="#ffffff" stroke-width="1.4" stroke-linecap="round"/>
+</svg>

@@ -3,6 +3,7 @@
 #include <Core/Interfaces/PhysicsWorldModule.h>
 #include <Foundation/Basics.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <JoltPlugin/CharacterCloth/JoltClothDeclarations.h>
 #include <JoltPlugin/JoltPluginDLL.h>
 #include <Physics/Body/BodyFilter.h>
 
@@ -25,6 +26,9 @@ enum class plJoltBroadphaseLayer : plUInt8
   Cloth,
   Debris,
 
+  /// Body shapes that only character cloth collides with. There is no plPhysicsShapeType for it, so queries never find them.
+  ClothCollider,
+
   ENUM_COUNT
 };
 
@@ -35,6 +39,14 @@ namespace plJoltCollisionFiltering
 
   /// \brief Returns the (hard-coded) collision mask that determines which other broad-phases to collide with.
   PL_JOLTPLUGIN_DLL plUInt32 GetBroadphaseCollisionMask(plJoltBroadphaseLayer broadphase);
+
+  /// \brief The object layer of a character cloth soft body.
+  ///
+  /// Such a body is stepped by its component and never added to the physics system, so the layer is not part of any
+  /// broadphase. It only tells the filters what the garment collides with when it gathers its colliders.
+  PL_JOLTPLUGIN_DLL JPH::ObjectLayer ConstructCharacterClothLayer(plUInt8 uiCollisionGroup, plJoltClothWorldCollision::Enum worldCollision);
+
+  PL_JOLTPLUGIN_DLL bool IsCharacterClothLayer(JPH::ObjectLayer layer);
 
 }; // namespace plJoltCollisionFiltering
 
@@ -56,7 +68,8 @@ class PL_JOLTPLUGIN_DLL plJoltBroadPhaseLayerFilter final : public JPH::BroadPha
 public:
   plJoltBroadPhaseLayerFilter(plBitflags<plPhysicsShapeType> shapeTypes)
   {
-    m_uiCollisionMask = shapeTypes.GetValue();
+    // cloth colliders have no shape type, and no query may find them
+    m_uiCollisionMask = shapeTypes.GetValue() & ~PL_BIT(static_cast<plUInt32>(plJoltBroadphaseLayer::ClothCollider));
   }
 
   plUInt32 m_uiCollisionMask = 0;

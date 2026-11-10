@@ -5,11 +5,43 @@
 #include <JoltPlugin/System/JoltCollisionFiltering.h>
 #include <JoltPlugin/System/JoltCore.h>
 
+// clang-format off
+PL_BEGIN_STATIC_REFLECTED_ENUM(plJoltClothWorldCollision, 1)
+  PL_ENUM_CONSTANTS(plJoltClothWorldCollision::None, plJoltClothWorldCollision::Static, plJoltClothWorldCollision::All)
+PL_END_STATIC_REFLECTED_ENUM;
+// clang-format on
+
+namespace
+{
+  // The high byte of a character cloth layer. Broadphase layers use the values below ENUM_COUNT there.
+  constexpr plUInt16 s_uiCharacterClothLayerBase = 0x80;
+
+  plJoltBroadphaseLayer GetBroadphaseOf(JPH::ObjectLayer layer)
+  {
+    return static_cast<plJoltBroadphaseLayer>(layer >> 8);
+  }
+
+  plJoltClothWorldCollision::Enum GetClothWorldCollision(JPH::ObjectLayer layer)
+  {
+    return static_cast<plJoltClothWorldCollision::Enum>((layer >> 8) - s_uiCharacterClothLayerBase);
+  }
+} // namespace
+
 namespace plJoltCollisionFiltering
 {
   JPH::ObjectLayer ConstructObjectLayer(plUInt8 uiCollisionGroup, plJoltBroadphaseLayer broadphase)
   {
     return static_cast<JPH::ObjectLayer>(static_cast<plUInt16>(broadphase) << 8 | static_cast<plUInt16>(uiCollisionGroup));
+  }
+
+  JPH::ObjectLayer ConstructCharacterClothLayer(plUInt8 uiCollisionGroup, plJoltClothWorldCollision::Enum worldCollision)
+  {
+    return static_cast<JPH::ObjectLayer>((s_uiCharacterClothLayerBase + static_cast<plUInt16>(worldCollision)) << 8 | static_cast<plUInt16>(uiCollisionGroup));
+  }
+
+  bool IsCharacterClothLayer(JPH::ObjectLayer layer)
+  {
+    return (layer >> 8) >= s_uiCharacterClothLayerBase;
   }
 
   plUInt32 GetBroadphaseCollisionMask(plJoltBroadphaseLayer broadphase)
@@ -49,6 +81,10 @@ namespace plJoltCollisionFiltering
 
       case plJoltBroadphaseLayer::Debris:
         return PL_BIT((plUInt32)plJoltBroadphaseLayer::Static) | PL_BIT((plUInt32)plJoltBroadphaseLayer::Dynamic) | PL_BIT((plUInt32)plJoltBroadphaseLayer::Character) | PL_BIT((plUInt32)plJoltBroadphaseLayer::Ragdoll);
+
+      case plJoltBroadphaseLayer::ClothCollider:
+        // nothing in the simulation touches cloth colliders, a character cloth body finds them through its own layer
+        return 0;
 
         PL_DEFAULT_CASE_NOT_IMPLEMENTED;
     }
@@ -100,6 +136,9 @@ const char* plJoltObjectToBroadphaseLayer::GetBroadPhaseLayerName(JPH::BroadPhas
     case Debris:
       return "Debris";
 
+    case ClothCollider:
+      return "ClothCollider";
+
       PL_DEFAULT_CASE_NOT_IMPLEMENTED;
   }
 }
@@ -115,7 +154,9 @@ static_assert(plPhysicsShapeType::Ragdoll == PL_BIT((plUInt32)plJoltBroadphaseLa
 static_assert(plPhysicsShapeType::Rope == PL_BIT((plUInt32)plJoltBroadphaseLayer::Rope));
 static_assert(plPhysicsShapeType::Cloth == PL_BIT((plUInt32)plJoltBroadphaseLayer::Cloth));
 static_assert(plPhysicsShapeType::Debris == PL_BIT((plUInt32)plJoltBroadphaseLayer::Debris));
-static_assert(plPhysicsShapeType::Count == (plUInt32)plJoltBroadphaseLayer::ENUM_COUNT);
+// ClothCollider is the one broadphase layer without a shape type
+static_assert(plPhysicsShapeType::Count == (plUInt32)plJoltBroadphaseLayer::ClothCollider);
+static_assert(plPhysicsShapeType::Count + 1 == (plUInt32)plJoltBroadphaseLayer::ENUM_COUNT);
 
 bool plJoltObjectLayerFilter::ShouldCollide(JPH::ObjectLayer inLayer) const
 {
@@ -124,13 +165,40 @@ bool plJoltObjectLayerFilter::ShouldCollide(JPH::ObjectLayer inLayer) const
 
 bool plJoltObjectVsBroadPhaseLayerFilter::ShouldCollide(JPH::ObjectLayer inLayer1, JPH::BroadPhaseLayer inLayer2) const
 {
+  const plJoltBroadphaseLayer broadphase2 = static_cast<plJoltBroadphaseLayer>((plUInt8)inLayer2);
+
+  if (plJoltCollisionFiltering::IsCharacterClothLayer(inLayer1))
+  {
+    if (broadphase2 == plJoltBroadphaseLayer::ClothCollider)
+      return true;
+
+    switch (GetClothWorldCollision(inLayer1))
+    {
+      case plJoltClothWorldCollision::Static:
+        return broadphase2 == plJoltBroadphaseLayer::Static;
+
+      case plJoltClothWorldCollision::All:
+        return broadphase2 == plJoltBroadphaseLayer::Static || broadphase2 == plJoltBroadphaseLayer::Dynamic;
+
+      default:
+        return false;
+    }
+  }
+
   const plUInt32 uiMask1 = static_cast<plUInt32>(PL_BIT(inLayer1 >> 8));
-  const plUInt32 uiMask2 = plJoltCollisionFiltering::GetBroadphaseCollisionMask(static_cast<plJoltBroadphaseLayer>((plUInt8)inLayer2));
+  const plUInt32 uiMask2 = plJoltCollisionFiltering::GetBroadphaseCollisionMask(broadphase2);
 
   return (uiMask1 & uiMask2) != 0;
 }
 
 bool plJoltObjectLayerPairFilter::ShouldCollide(JPH::ObjectLayer inObject1, JPH::ObjectLayer inObject2) const
 {
+  // A garment collides with body colliders whatever the project's layer matrix says. Its group filter keeps it to its own.
+  if (plJoltCollisionFiltering::IsCharacterClothLayer(inObject1) && GetBroadphaseOf(inObject2) == plJoltBroadphaseLayer::ClothCollider)
+    return true;
+
+  if (plJoltCollisionFiltering::IsCharacterClothLayer(inObject2) && GetBroadphaseOf(inObject1) == plJoltBroadphaseLayer::ClothCollider)
+    return true;
+
   return plJoltCore::GetCollisionFilterConfig().IsCollisionEnabled(static_cast<plUInt32>(inObject1) & 0xFF, static_cast<plUInt32>(inObject2) & 0xFF);
 }

@@ -104,6 +104,13 @@ void RunBreakTests();
 void RunBuoyancyTests();
 void RunCharacterTests();
 void RunLifecycleTests();
+void RunClothTests();
+void RunBoneChainTests();
+
+/// \brief Runs the cloth stress test's motion script on a transformed cloth asset (a .plBinJoltCloth file).
+///
+/// With a baseline file the run is also compared with it, or written to it when bWriteBaseline is set.
+void RunClothStressFile(const char* szClothFile, const char* szBaselineFile, bool bWriteBaseline);
 
 /// \brief Runs the soak scene for the given amount of wall-clock seconds. Returns the number of simulated frames.
 plUInt64 RunStressScene(double fSeconds);
