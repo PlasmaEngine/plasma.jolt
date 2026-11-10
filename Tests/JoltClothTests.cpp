@@ -6,6 +6,7 @@
 #include <Foundation/Utilities/AssetFileHeader.h>
 #include <Core/ResourceManager/ResourceManager.h>
 #include <Foundation/Configuration/CVar.h>
+#include <JoltPlugin/CharacterCloth/JoltBoneChainComponent.h>
 #include <JoltPlugin/CharacterCloth/JoltCharacterClothComponent.h>
 #include <JoltPlugin/CharacterCloth/JoltClothBuilder.h>
 #include <JoltPlugin/CharacterCloth/JoltClothInstance.h>
@@ -346,7 +347,7 @@ static void TestMaxDistanceHoldsOnSpinningJoint()
 }
 
 /// A character that moves further than the teleport distance in one frame must not whip its cloth across the level.
-static void TestTeleport()
+static void TestClothTeleport()
 {
   for (plUInt32 uiMode = 0; uiMode < 2; ++uiMode)
   {
@@ -827,6 +828,46 @@ static void TestComponent()
     GetCloth(2)->GetInstance().GetSimPositions(scaled);
     GetCloth(1)->GetInstance().GetSimPositions(plain);
     CheckNear(scaled[0].z, plain[0].z * 1.5f, 0.01f, "a scaled character simulates a scaled garment");
+  }
+
+  // A paused world keeps its cloth as it is. A garment that appears while it is paused still starts from its pose.
+  plDynamicArray<plVec3> beforePause;
+  plComponentHandle hLate;
+
+  {
+    PL_LOCK(test.GetWorld().GetWriteMarker());
+
+    GetCloth(1)->GetInstance().GetSimPositions(beforePause);
+    test.GetWorld().GetClock().SetPaused(true);
+
+    plGameObject* pObject = test.CreateObject(plVec3(20.0f, 0, 0));
+    objects.PushBack(pObject->GetHandle());
+
+    plJoltCharacterClothComponent* pLate = nullptr;
+    hLate = plJoltCharacterClothComponent::CreateComponent(pObject, pLate);
+    pLate->SetCloth(hCloth);
+    pLate->SetPose(plMakeArrayPtr(&mSkin, 1), plMat4::MakeIdentity());
+  }
+
+  test.Step(5);
+
+  {
+    PL_LOCK(test.GetWorld().GetWriteMarker());
+
+    plDynamicArray<plVec3> duringPause;
+    GetCloth(1)->GetInstance().GetSimPositions(duringPause);
+
+    float fMoved = 0.0f;
+    for (plUInt32 p = 0; p < beforePause.GetCount(); ++p)
+      fMoved = plMath::Max(fMoved, (duringPause[p] - beforePause[p]).GetLength());
+
+    CheckNear(fMoved, 0.0f, 0.00001f, "a paused world leaves its cloth where it is");
+    Check(GetCloth(1)->GetState() == plJoltClothState::Full, "a paused garment keeps its state");
+
+    plJoltCharacterClothComponent* pLate = nullptr;
+    Check(test.GetWorld().TryGetComponent(hLate, pLate) && pLate->GetInstance().IsInitialized() && pLate->GetState() == plJoltClothState::Full, "a garment created in a paused world starts from its pose");
+
+    test.GetWorld().GetClock().SetPaused(false);
 
     for (const plGameObjectHandle& hObject : objects)
       test.GetWorld().DeleteObjectNow(hObject);
@@ -852,6 +893,16 @@ static void TestLodAndBudget()
   Check(pBudget != nullptr, "the budget cvar exists");
   if (pBudget == nullptr)
     return;
+
+  // without a budget of its own the manager takes the one of the quality tier; a test has no game settings: medium
+  Check(plJoltCharacterClothComponentManager::GetBudgetForTier("low") < plJoltCharacterClothComponentManager::GetBudgetForTier("high"), "the low tier simulates fewer garments than the high tier");
+  Check(plJoltCharacterClothComponentManager::GetBudgetForTier("high") <= plJoltCharacterClothComponentManager::GetBudgetForTier("max"), "the max tier simulates at least as many garments as the high tier");
+  Check(plJoltCharacterClothComponentManager::GetBudgetForTier("custom") == plJoltCharacterClothComponentManager::GetBudgetForTier("medium"), "a tier the plugin does not know gets the medium budget");
+
+  {
+    plCVarInt* pMedium = static_cast<plCVarInt*>(plCVar::FindCVarByName("Jolt.Cloth.Budget.Medium"));
+    Check(pMedium != nullptr && plJoltCharacterClothComponentManager::GetBudgetForTier("medium") == *pMedium, "the budget of a tier is its cvar");
+  }
 
   const plInt32 iOldBudget = *pBudget;
   *pBudget = 3;
@@ -903,7 +954,8 @@ static void TestLodAndBudget()
     Check(StateOf(5) == plJoltClothState::Skinned, "a garment beyond the simulate distance is skinned");
   }
 
-  *pBudget = -1;
+  // a budget that is larger than the number of garments limits nothing
+  *pBudget = 1000;
   test.StepSeconds(1.0f);
 
   {
@@ -1172,6 +1224,220 @@ static void TestSkeletonColliders()
     CheckNear(listed.m_Colliders[0].m_fRadius, 0.08f, 1.0e-5f, "inflate adds to the radius");
 }
 
+/// Bone chains as the stand-in of a garment: they rest while its cloth simulates and swing while it is skinned.
+static void TestBoneChainStandIn()
+{
+  World test;
+
+  Cape cape;
+  Check(MakeCape(cape, 8, 10), "a cape builds");
+
+  plJoltClothResourceDescriptor resourceDesc;
+  resourceDesc.m_Cloth = cape.m_Desc;
+  const plJoltClothResourceHandle hCloth = plResourceManager::CreateResource<plJoltClothResource>("JoltTests_StandInCape", std::move(resourceDesc));
+
+  // a tail of two joints behind the hips
+  plSkeletonResourceDescriptor skeleton;
+  plDynamicArray<plMat4> restPose;
+
+  {
+    plSkeletonBuilder builder;
+    const plUInt16 uiHips = builder.AddJoint("Hips", plTransform(plVec3(0, 0, 1.0f)));
+    const plUInt16 uiTail1 = builder.AddJoint("Tail1", plTransform(plVec3(-0.1f, 0, 0)), uiHips);
+    builder.AddJoint("Tail2", plTransform(plVec3(-0.1f, 0, 0)), uiTail1);
+    builder.BuildSkeleton(skeleton.m_Skeleton);
+    skeleton.m_Skeleton.m_BoneDirection = plBasisAxis::PositiveX;
+
+    restPose.PushBack(plMat4::MakeTranslation(plVec3(0, 0, 1.0f)));
+    restPose.PushBack(plMat4::MakeTranslation(plVec3(-0.1f, 0, 1.0f)));
+    restPose.PushBack(plMat4::MakeTranslation(plVec3(-0.2f, 0, 1.0f)));
+  }
+
+  const plTransform rootTransform = skeleton.m_RootTransform;
+  const plSkeletonResourceHandle hSkeleton = plResourceManager::CreateResource<plSkeletonResource>("JoltTests_StandInSkeleton", std::move(skeleton));
+
+  plGameObject* pObject = test.CreateObject(plVec3::MakeZero());
+  const plMat4 mSkin = plMat4::MakeIdentity();
+  plComponentHandle hChain;
+  plComponentHandle hClothComponent;
+
+  {
+    PL_LOCK(test.GetWorld().GetWriteMarker());
+
+    plJoltCharacterClothComponent* pCloth = nullptr;
+    hClothComponent = plJoltCharacterClothComponent::CreateComponent(pObject, pCloth);
+    pCloth->SetCloth(hCloth);
+    pCloth->SetPose(plMakeArrayPtr(&mSkin, 1), plMat4::MakeIdentity());
+    pCloth->m_Importance = plJoltClothImportance::Always;
+
+    plJoltBoneChainComponent* pChain = nullptr;
+    hChain = plJoltBoneChainComponent::CreateComponent(pObject, pChain);
+    pChain->m_Chains.PushBack("Tail1");
+    pChain->m_fStiffness = 0.0f;
+    pChain->m_MaxAngle = plAngle::MakeFromDegree(180);
+    pChain->m_bStandInForCloth = true;
+    pChain->SetSkeleton(hSkeleton);
+  }
+
+  // the animation sends the rest pose every frame
+  auto Play = [&](plUInt32 uiFrames)
+  {
+    for (plUInt32 uiFrame = 0; uiFrame < uiFrames; ++uiFrame)
+    {
+      {
+        PL_LOCK(test.GetWorld().GetWriteMarker());
+
+        plResourceLock<plSkeletonResource> pSkeleton(hSkeleton, plResourceAcquireMode::BlockTillLoaded);
+
+        plMsgAnimationPoseUpdated msg;
+        msg.m_pRootTransform = &rootTransform;
+        msg.m_pSkeleton = &pSkeleton->GetDescriptor().m_Skeleton;
+        msg.m_ModelTransforms = restPose;
+        pObject->SendMessage(msg);
+      }
+
+      test.Step(1);
+    }
+  };
+
+  auto TailEnd = [&]() -> plVec3
+  {
+    PL_LOCK(test.GetWorld().GetWriteMarker());
+
+    plJoltBoneChainComponent* pChain = nullptr;
+    if (!test.GetWorld().TryGetComponent(hChain, pChain) || pChain->GetChainCount() == 0 || pChain->GetChainPoints(0).GetCount() != 3)
+      return plVec3::MakeZero();
+
+    return pChain->GetChainPoints(0)[2];
+  };
+
+  auto SetSimulate = [&](bool bSimulate)
+  {
+    PL_LOCK(test.GetWorld().GetWriteMarker());
+
+    plJoltCharacterClothComponent* pCloth = nullptr;
+    if (test.GetWorld().TryGetComponent(hClothComponent, pCloth))
+      pCloth->SetSimulate(bSimulate, plTime::MakeZero());
+  };
+
+  SetSimulate(false);
+  Play(120);
+  Check(TailEnd().z < 0.85f, "while the cloth is skinned the stand-in chain hangs under gravity");
+
+  SetSimulate(true);
+  Play(60);
+
+  {
+    PL_LOCK(test.GetWorld().GetWriteMarker());
+
+    plJoltCharacterClothComponent* pCloth = nullptr;
+    Check(test.GetWorld().TryGetComponent(hClothComponent, pCloth) && pCloth->GetState() == plJoltClothState::Full, "the cloth simulates again");
+  }
+
+  // the chain keeps the points it had when it stopped: a later hand-over starts from the animated pose again
+  SetSimulate(false);
+  Play(2);
+  Check(TailEnd().z > 0.97f, "the stand-in chain starts from the animated pose when the cloth hands over");
+
+  Play(120);
+  Check(TailEnd().z < 0.85f, "and swings again while the cloth is skinned");
+}
+
+/// Fit From Skin: a limb skinned to one bone becomes a capsule along it, a ball a sphere, and thin parts get nothing.
+static void TestFitCollidersFromSkin()
+{
+  plDynamicArray<plVec3> positions;
+  plDynamicArray<plVec4U16> boneIndices;
+  plDynamicArray<plVec4> boneWeights;
+
+  auto AddVertex = [&](const plVec3& vPosition, plUInt16 uiBone)
+  {
+    positions.PushBack(vPosition);
+    boneIndices.PushBack(plVec4U16(uiBone, 0, 0, 0));
+    boneWeights.PushBack(plVec4(1, 0, 0, 0));
+  };
+
+  // bone 0: a thigh, a cylinder of radius 8 cm from the hip at z = 1 down to the knee at z = 0.5
+  for (plUInt32 ring = 0; ring <= 10; ++ring)
+  {
+    for (plUInt32 side = 0; side < 16; ++side)
+    {
+      const plAngle angle = plAngle::MakeFromDegree(side * 22.5f);
+      AddVertex(plVec3(0.08f * plMath::Cos(angle), 0.2f + 0.08f * plMath::Sin(angle), 1.0f - ring * 0.05f), 0);
+    }
+  }
+
+  // bone 1: a head, points on a sphere of radius 10 cm around z = 1.7
+  for (plUInt32 ring = 1; ring < 8; ++ring)
+  {
+    for (plUInt32 side = 0; side < 12; ++side)
+    {
+      const plAngle polar = plAngle::MakeFromDegree(ring * 22.5f);
+      const plAngle angle = plAngle::MakeFromDegree(side * 30.0f);
+      AddVertex(plVec3(0, 0, 1.7f) + plVec3(plMath::Sin(polar) * plMath::Cos(angle), plMath::Sin(polar) * plMath::Sin(angle), plMath::Cos(polar)) * 0.1f, 1);
+    }
+  }
+
+  // bone 2: a finger, a cylinder of radius 1 cm
+  for (plUInt32 ring = 0; ring <= 4; ++ring)
+  {
+    for (plUInt32 side = 0; side < 8; ++side)
+    {
+      const plAngle angle = plAngle::MakeFromDegree(side * 45.0f);
+      AddVertex(plVec3(0.6f + ring * 0.02f, 0.01f * plMath::Cos(angle), 1.4f + 0.01f * plMath::Sin(angle)), 2);
+    }
+  }
+
+  plHashedString names[3];
+  names[0].Assign("Thigh");
+  names[1].Assign("Head");
+  names[2].Assign("Finger");
+
+  // the thigh's joint sits at the hip and is turned, so that the fit has to work in the joint's own space
+  const plTransform thighJoint(plVec3(0, 0.2f, 1.0f), plQuat::MakeFromAxisAndAngle(plVec3(0, 1, 0), plAngle::MakeFromDegree(90)));
+  const plTransform headJoint(plVec3(0, 0, 1.6f));
+  const plTransform fingerJoint(plVec3(0.6f, 0, 1.4f));
+
+  const plMat4 inverseBindPoses[3] = {thighJoint.GetAsMat4().GetInverse(), headJoint.GetAsMat4().GetInverse(), fingerJoint.GetAsMat4().GetInverse()};
+
+  plJoltClothSkinFitOptions options;
+  options.m_fRadiusScale = 1.0f;
+
+  plDynamicArray<plJoltClothCollider> colliders;
+  Check(plJoltClothBuilder::FitCollidersFromSkin(positions, boneIndices, boneWeights, names, inverseBindPoses, options, nullptr, colliders) == 2, "the thigh and the head get a shape, the finger does not");
+
+  if (colliders.GetCount() == 2)
+  {
+    const plJoltClothCollider& thigh = colliders[0];
+    Check(thigh.m_sJoint == plTempHashedString("Thigh") && thigh.m_Type == plJoltClothCollider::Type::Capsule, "the thigh becomes a capsule");
+    CheckNear(thigh.m_fRadius, 0.08f, 0.002f, "the capsule has the thigh's radius");
+    CheckNear(thigh.m_fLength, 0.5f - 2.0f * 0.08f, 0.01f, "the capsule's caps end where the thigh ends");
+
+    // in the bind space of the mesh the capsule stands upright in the middle of the thigh
+    const plTransform shape = thigh.GetShapeTransform(thighJoint);
+    const plVec3 vAxis = shape.m_qRotation * plVec3(1, 0, 0);
+    CheckNear(plMath::Abs(vAxis.z), 1.0f, 1.0e-3f, "the capsule runs along the thigh");
+    Check((shape.m_vPosition - plVec3(0, 0.2f, 0.75f)).GetLength() < 0.005f, "the capsule sits in the middle of the thigh");
+
+    const plJoltClothCollider& head = colliders[1];
+    Check(head.m_sJoint == plTempHashedString("Head") && head.m_Type == plJoltClothCollider::Type::Sphere, "the head becomes a sphere");
+    Check((head.GetShapeTransform(headJoint).m_vPosition - plVec3(0, 0, 1.7f)).GetLength() < 0.01f, "the sphere sits in the head");
+  }
+
+  // with a cloth to fit for, only the shapes it can reach are kept: a cape behind the thigh, far from the head
+  Cape cape;
+  Check(MakeCape(cape, 6, 8), "a cape builds");
+
+  plJoltClothDescriptor reach = cape.m_Desc;
+  for (plVec3& vPosition : reach.m_Positions)
+  {
+    vPosition = plVec3(-0.15f, 0.2f + vPosition.y * 0.2f, 0.75f + vPosition.z * 0.1f);
+  }
+
+  colliders.Clear();
+  Check(plJoltClothBuilder::FitCollidersFromSkin(positions, boneIndices, boneWeights, names, inverseBindPoses, options, &reach, colliders) == 1 && colliders[0].m_sJoint == plTempHashedString("Thigh"), "only the shape in reach of the cloth is kept");
+}
+
 /// Painted maps are stored with their positions and find their particles again after the sim mesh changed.
 static void TestPaintedMaps()
 {
@@ -1395,16 +1661,30 @@ static void TestStressTest()
     Check(!suggestions.IsEmpty() && suggestions[0].FindSubString("Auto Select") != nullptr, "a cloth inside the body comes with the fix: Auto Select");
   }
 
-  // fault 2: tethers are off
+  // fault 2: nothing holds the length of the cloth, neither tethers nor the stretch limit
   {
     plJoltClothDescriptor desc = cape.m_Desc;
     desc.m_Simulation.m_bTethers = false;
+    desc.m_Simulation.m_fStretchLimit = 0.0f;
 
     plJoltClothStressResult result;
     Check(plJoltClothStressTest::RunScript(test.GetJolt(), desc, {}, gates, options, result).Succeeded(), "the script runs without tethers");
     Print("tethers off:", result);
 
-    Check((result.m_Worst.m_uiFailedGates & plJoltClothStressGate::Stretch) != 0, "the test catches tethers that are switched off");
+    Check((result.m_Worst.m_uiFailedGates & plJoltClothStressGate::Stretch) != 0, "the test catches tethers and stretch limit that are switched off");
+  }
+
+  // the stretch limit alone keeps the cloth from stretching, also without tethers
+  {
+    plJoltClothDescriptor desc = cape.m_Desc;
+    desc.m_Simulation.m_bTethers = false;
+
+    plJoltClothStressResult result;
+    Check(plJoltClothStressTest::RunScript(test.GetJolt(), desc, {}, gates, options, result).Succeeded(), "the script runs with the stretch limit only");
+    Print("stretch limit only:", result);
+
+    Check((result.m_Worst.m_uiFailedGates & plJoltClothStressGate::Stretch) == 0, "the stretch limit holds the cloth's length without tethers");
+    Check(result.m_Worst.m_fStretch <= desc.m_Simulation.m_fStretchLimit + 0.03f, "no edge ends a step much beyond the stretch limit");
   }
 
   // fault 3: a teleport is not treated as one
@@ -1496,6 +1776,60 @@ void RunClothStressFile(const char* szClothFile, const char* szBaselineFile, boo
   std::printf("  inside the body    %6u     gate %u particles\n", worst.m_uiInsideBody, gates.m_uiMaxInsideBody);
   std::printf("  speed against body %6.1f m/s gate %.1f m/s\n", worst.m_fRelativeSpeed, gates.m_fMaxRelativeSpeed);
   std::printf("  solve              %6.3f ms  gate %.2f ms\n", worst.m_fSolveMs, gates.m_fMaxSolveMs);
+
+  // where in the script the worst values are: the parts of the script by the time they start at
+  {
+    static const struct
+    {
+      float m_fStart;
+      const char* m_szName;
+    } s_Parts[] = {{0.0f, "stand"}, {1.0f, "sprint"}, {2.5f, "hard stop"}, {3.25f, "sprint backwards"}, {4.25f, "hard stop"}, {5.0f, "spin"}, {6.5f, "after the spin"}, {7.0f, "teleport"}};
+
+    for (plUInt32 p = 0; p < PL_ARRAY_SIZE(s_Parts); ++p)
+    {
+      const float fEnd = p + 1 < PL_ARRAY_SIZE(s_Parts) ? s_Parts[p + 1].m_fStart : 1.0e9f;
+
+      plJoltClothStressFrame part;
+      plUInt32 uiFailed = 0;
+
+      for (const plJoltClothStressFrame& frame : result.m_Frames)
+      {
+        if (frame.m_fTime < s_Parts[p].m_fStart - 1.0e-4f || frame.m_fTime >= fEnd - 1.0e-4f)
+          continue;
+
+        if (frame.m_fStretch > part.m_fStretch)
+        {
+          part.m_uiStretchedEdge[0] = frame.m_uiStretchedEdge[0];
+          part.m_uiStretchedEdge[1] = frame.m_uiStretchedEdge[1];
+        }
+
+        part.m_fStretch = plMath::Max(part.m_fStretch, frame.m_fStretch);
+        part.m_fRelativeSpeed = plMath::Max(part.m_fRelativeSpeed, frame.m_fRelativeSpeed);
+        part.m_uiInsideBody = plMath::Max(part.m_uiInsideBody, frame.m_uiInsideBody);
+        uiFailed += frame.m_uiFailedGates != 0 ? 1 : 0;
+      }
+
+      // the edge that stretched most: its length at rest and how far its two particles may leave their skinned place
+      const plUInt32 a = part.m_uiStretchedEdge[0];
+      const plUInt32 b = part.m_uiStretchedEdge[1];
+
+      std::printf("    %-17s stretch %6.1f %%  inside %3u  speed %5.1f m/s  failed frames %3u  edge %u-%u, %.1f cm long, max distance %.1f and %.1f cm\n", s_Parts[p].m_szName, part.m_fStretch * 100.0f, part.m_uiInsideBody, part.m_fRelativeSpeed, uiFailed, a, b, (desc.m_Positions[a] - desc.m_Positions[b]).GetLength() * 100.0f, desc.m_MaxDistance[a] * 100.0f, desc.m_MaxDistance[b] * 100.0f);
+    }
+  }
+
+  // the first particle that went into the body, and the shape it went into
+  for (const plJoltClothStressFrame& frame : result.m_Frames)
+  {
+    if (frame.m_uiInsideParticle == plInvalidIndex)
+      continue;
+
+    const plUInt32 p = frame.m_uiInsideParticle;
+    const plVec3& vPosition = desc.m_Positions[p];
+    const char* szJoint = frame.m_uiInsideShape < desc.m_Colliders.GetCount() ? desc.m_Colliders[frame.m_uiInsideShape].m_sJoint.GetData() : "?";
+
+    std::printf("    first inside the body at %.2f s: particle %u, bound at (%.3f, %.3f, %.3f), max distance %.1f cm, in the shape of joint '%s'\n", frame.m_fTime, p, vPosition.x, vPosition.y, vPosition.z, desc.m_MaxDistance[p] * 100.0f, szJoint);
+    break;
+  }
 
   plDynamicArray<plString> suggestions;
   result.GetSuggestions(suggestions);
@@ -1598,11 +1932,13 @@ void RunClothTests()
   TestBuilderBindsToProxy();
   TestImportedMasks();
   TestSkeletonColliders();
+  TestFitCollidersFromSkin();
+  TestBoneChainStandIn();
   TestPaintedMaps();
   TestMapTools();
   TestDescriptorRoundTrip();
   TestMaxDistanceHoldsOnSpinningJoint();
-  TestTeleport();
+  TestClothTeleport();
   TestFrameRateIndependence();
   TestScaledAndMirroredBindSpace();
   TestBackstop();
