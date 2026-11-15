@@ -19,7 +19,8 @@
 
 // clang-format off
 // NOTE: bump the version with EVERY change that affects the baked output, or existing assets keep their stale (cached) transform results
-PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plDestructibleMeshAssetDocument, 15, plRTTINoAllocator)
+// 16: rebuild render meshlets with the engine's seam-preserving meshoptimizer 1.3 pipeline.
+PL_BEGIN_DYNAMIC_REFLECTED_TYPE(plDestructibleMeshAssetDocument, 16, plRTTINoAllocator)
 PL_END_DYNAMIC_REFLECTED_TYPE;
 // clang-format on
 

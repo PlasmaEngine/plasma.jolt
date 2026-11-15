@@ -25,7 +25,7 @@ private:
 
   mutable plMutex m_Mutex;
   plDeque<plComponentHandle> m_RequireUpdate;
-  plDeque<plJoltMeshResourceHandle> m_ChangedMeshes;
+  plDeque<plString> m_ChangedMeshes;
 
 protected:
   virtual void Initialize() override;

@@ -199,7 +199,7 @@ void plJoltVisColMeshComponentManager::Deinitialize()
 void plJoltVisColMeshComponentManager::Update(const plWorldModule::UpdateContext& context)
 {
   plDeque<plComponentHandle> requireUpdate;
-  plDeque<plJoltMeshResourceHandle> changedMeshes;
+  plDeque<plString> changedMeshes;
   {
     PL_LOCK(m_Mutex);
     m_RequireUpdate.Swap(requireUpdate);
@@ -210,7 +210,7 @@ void plJoltVisColMeshComponentManager::Update(const plWorldModule::UpdateContext
   // here, while world component storage is stable.
   for (auto it = GetComponents(); it.IsValid(); it.Next())
   {
-    if (changedMeshes.Contains(it->GetMesh()))
+    if (it->GetMesh().IsValid() && changedMeshes.Contains(it->GetMesh().GetResourceID()))
       requireUpdate.PushBack(it->GetHandle());
   }
 
@@ -236,7 +236,9 @@ void plJoltVisColMeshComponentManager::ResourceEventHandler(const plResourceEven
   {
     PL_LOCK(m_Mutex);
 
-    m_ChangedMeshes.PushBack(plJoltMeshResourceHandle(static_cast<plJoltMeshResource*>(e.m_pResource)));
+    // Unloading also runs during resource deletion. Keep an owned ID, not a
+    // resource handle that would outlive the resource being collected.
+    m_ChangedMeshes.PushBack(e.m_pResource->GetResourceID());
   }
 }
 

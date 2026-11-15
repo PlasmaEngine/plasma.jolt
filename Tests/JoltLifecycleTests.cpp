@@ -1,6 +1,7 @@
 #include "JoltTestSupport.h"
 #include <TestFramework/Utilities/TestLogInterface.h>
 #include <JoltPlugin/Components/JoltRagdollComponent.h>
+#include <JoltPlugin/Components/JoltVisColMeshComponent.h>
 
 using namespace JoltTest;
 
@@ -136,4 +137,34 @@ PL_CREATE_SIMPLE_TEST(JoltLifecycle, RagdollComponentChurn)
 PL_CREATE_SIMPLE_TEST(JoltLifecycle, WorldTeardownWithLiveBodies)
 {
   TestWorldTeardownWithLiveBodies();
+}
+
+PL_CREATE_SIMPLE_TEST(JoltLifecycle, CollisionPreviewResourceCollection)
+{
+  World test;
+  plGameObject* pObject = test.CreateObject(plVec3::MakeZero());
+  {
+    PL_LOCK(test.GetWorld().GetWriteMarker());
+    plJoltVisColMeshComponent* pPreview = nullptr;
+    plJoltVisColMeshComponent::CreateComponent(pObject, pPreview);
+    // Register the manager without activating render components in this GPU-free test.
+    pPreview->SetActiveFlag(false);
+  }
+  test.Step(1);
+
+  // The preview manager observes all Jolt mesh resources, including ones not
+  // used in this world. Collection must not leave handles in its pending queue.
+  for (plUInt32 uiRound = 0; uiRound < 3; ++uiRound)
+  {
+    plStringBuilder sResourceId;
+    sResourceId.SetFormat("JoltTest/UnusedCollisionPreview-{}", uiRound);
+    auto hMesh = plResourceManager::LoadResource<plJoltMeshResource>(sResourceId);
+    hMesh.Invalidate();
+    plResourceManager::FreeAllUnusedResources();
+    Check(!plResourceManager::GetExistingResource<plJoltMeshResource>(sResourceId).IsValid(),
+      "unused collision resources are collected while a preview manager is alive");
+  }
+
+  test.Step(1);
+  Check(true, "preview notifications remain safe after their resources are deleted");
 }

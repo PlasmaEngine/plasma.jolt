@@ -186,7 +186,7 @@ plStatus plJoltCollisionMeshAssetDocument::CreateMeshFromFile(plJoltCookingMesh&
   const plUInt32 uiNumTriangles = meshBuffer.GetPrimitiveCount();
   const plUInt32 uiNumVertices = meshBuffer.GetVertexCount();
 
-  if (uiNumTriangles < 3 || uiNumVertices < 3)
+  if (uiNumTriangles == 0 || uiNumVertices < 3)
     return plStatus("Invalid collision mesh.");
 
   outMesh.m_PolygonSurfaceID.SetCountUninitialized(uiNumTriangles);
