@@ -4,7 +4,7 @@
 #include <Foundation/Basics.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <JoltPlugin/JoltPluginDLL.h>
-#include <Physics/Body/BodyFilter.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 
 class plCollisionFilterConfig;
 
